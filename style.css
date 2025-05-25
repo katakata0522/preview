@@ -1,0 +1,343 @@
+html, body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  width: 100vw;
+  overflow-x: hidden;
+  overflow-y: hidden;
+  box-sizing: border-box;
+}
+body {
+  background: #23272d;
+  color: #fff;
+  font-family: 'Noto Sans JP', sans-serif;
+  min-height: 100vh;
+}
+/* ---- ヘッダー ---- */
+.header {
+  width: 100%;
+  height: 48px;
+  background: #20242b;
+  display: flex;
+  align-items: center;
+  padding: 0 1em 0 0.3em;
+  border-bottom: 2px solid #292d36;
+  position: relative;
+  z-index: 1020;
+  gap: 0.3em;
+}
+.header-title {
+  color: #e3eafc;
+  font-size: 1.16em;
+  font-weight: bold;
+  margin-left: 1.0em;
+  letter-spacing: 0.05em;
+  user-select: none;
+}
+.sidebar-toggle {
+  background: #415fff;
+  color: #fff;
+  border: none;
+  border-radius: 50%;
+  width: 35px; height: 35px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.13em;
+  margin-right: 0.5em;
+  margin-left: 0.1em;
+  cursor: pointer;
+  box-shadow: 0 2px 10px #4448;
+  transition: background 0.12s;
+  z-index: 1100;
+}
+.sidebar-toggle:hover { background: #2230b5; }
+.sidebar {
+  width: 63px;
+  background: #181d26;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 1em 0 0 0;
+  gap: 0.7em;
+  z-index: 15;
+  box-shadow: 2px 0 10px #0012;
+  border-right: 2px solid #222832;
+  min-height: 0;
+  min-width: 0;
+  transition: width 0.16s;
+  position: relative;
+  overflow-x: hidden;
+}
+.sidebar.closed {
+  width: 0 !important; min-width: 0 !important; padding: 0 !important;
+  border-right: none !important; overflow: hidden !important;
+}
+.sidebar-btn {
+  display: flex; flex-direction: column; align-items: center; gap: 0.11em;
+  background: none; border: none; cursor: pointer;
+  color: #d3eaff; font-size: 1.3em; border-radius: 9px;
+  width: 44px; height: 44px; margin: 0.13em 0;
+  transition: background 0.13s, color 0.13s;
+  position: relative;
+  outline: none;
+}
+.sidebar-btn:hover, .sidebar-btn:focus {
+  background: #39435c; color: #fff;
+}
+.sidebar-btn span { font-size: 0.62em; margin-top: 2px; }
+.sidebar-btn input[type="file"] { display: none; }
+.sidebar-tooltip {
+  display: none; position: absolute; left: 48px; top: 50%; transform: translateY(-50%);
+  background: #232946; color: #fff; font-size: 0.93em; border-radius: 7px; padding: 0.3em 0.8em;
+  box-shadow: 0 2px 10px #0019; white-space: nowrap; z-index: 100;
+}
+.sidebar-btn:hover .sidebar-tooltip, .sidebar-btn:focus .sidebar-tooltip {
+  display: block;
+}
+.tabs {
+  background: #1a1d23; padding: 0.6em 1em 0.18em 1em; display: flex;
+  align-items: flex-end; flex-wrap: wrap; border-bottom: 1.5px solid #333;
+  gap: 0.2em;
+  min-height: 46px;
+}
+.tab-btn {
+  background: #444; color: #fff; border: none; padding: 0.26em 1.15em 0.24em 0.95em;
+  margin-right: 4px; margin-bottom: 4px; border-radius: 9px 9px 0 0; cursor: pointer;
+  font-size: 1em; min-width: 66px; max-width: 164px; position: relative;
+  transition: 0.1s; display: flex; align-items: center;
+}
+.tab-btn.active { background: #fff; color: #23272d; font-weight: bold; z-index: 2; }
+.tab-btn .close {
+  color: #d00; font-size: 1.23em; margin-left: 0.22em; background: transparent;
+  border: none; cursor: pointer; line-height: 1; position: relative; right: -2px;
+  padding: 0 0.12em; align-self: center; display: inline-block;
+}
+.add-btn {
+  background: #2979ff; color: #fff; border: none; padding: 0.36em 1.1em;
+  margin-left: 0.6em; border-radius: 8px; cursor: pointer; font-size: 1.08em; margin-bottom: 4px;
+}
+.add-btn:hover { background: #1761c0; }
+
+/* ===== レイアウトの根本flex設計・下端揃え ===== */
+.app-wrapper {
+  display: flex;
+  flex-direction: row;
+  height: calc(100vh - 48px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  box-sizing: border-box;
+}
+.main-col {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+.main-area {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;   /* ←これが超重要。下端ピッタリ */
+  min-height: 0;
+  height: 100%;
+  position: relative;
+  overflow-x: hidden;
+}
+.editor-col, .preview-col {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  flex: 1 1 0;
+}
+.editor-col {
+  background: #181c22;
+  min-width: 220px;
+  max-width: 900px;
+  width: 36vw;
+  transition: width 0.07s;
+  padding: 1.1em 1.2em 0.6em 1.4em;
+  box-sizing: border-box;
+  overflow: visible;
+  position: relative;
+}
+.preview-col {
+  background: #22252b;
+  min-width: 220px;
+  border-left: 1.5px solid #333;
+  justify-content: flex-start;
+  align-items: stretch;
+  padding: 1.2em 1.2em 1em 1em;
+  position: relative;
+}
+.editor {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+/* spacerで実行ボタンに余白を */
+.spacer {
+  flex-grow: 1;
+  min-height: 2em;
+}
+.editor label {
+  font-weight: bold; color: #a0a4b0;
+  font-size: 1em; margin-top: 0.5em;
+}
+textarea {
+  width: 100%;
+  min-height: 50px;
+  margin-bottom: 10px;
+  background: #12151a;
+  color: #fff;
+  border-radius: 7px;
+  border: none;
+  font-family: 'Fira Mono', monospace;
+  font-size: 1.04em;
+  padding: 0.56em;
+  resize: vertical;
+  box-sizing: border-box;
+}
+.run-btn {
+  background: #22a745;
+  color: #fff;
+  border: none;
+  padding: 0.8em 2.2em;
+  font-size: 1.18em;
+  border-radius: 13px;
+  cursor: pointer;
+  margin: 1.1em auto 1.1em auto;
+  display: block;
+  box-shadow: 0 1px 6px #1115;
+  transition: background 0.18s;
+  align-self: center;
+  z-index: 1;
+}
+.run-btn:hover { background: #1c8738; }
+#execInfo { color:#ccc;font-size:0.98em; margin-bottom: 0.2em; display: block;}
+.note-area { margin-bottom: 0; margin-top: 0.5em; }
+.note textarea { height: 41px; font-size: 1em; }
+.divider {
+  width: 8px;
+  background: linear-gradient(180deg,#252b38 70%,#3b4252 100%);
+  cursor: ew-resize;
+  z-index: 4;
+  position: relative;
+  border-radius: 8px;
+  margin: 0 -2px;
+  transition: background 0.18s;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.divider:hover, .divider.active { background: #5581ff; }
+.snap-btns {
+  display: flex; flex-direction: column; gap: 13px; margin-bottom: 8px; margin-top: 5px;
+  align-items: center;
+}
+.snap-btn {
+  width: 30px; height: 30px; background: #222947; color: #b3d7ff;
+  border: 2px solid #4972b4; border-radius: 50%; cursor: pointer; font-size: 1em;
+  display: flex; align-items: center; justify-content: center; position: relative;
+  transition: background 0.15s, border 0.15s;
+  opacity: 0.87;
+  box-shadow: 0 1px 8px #15203311;
+  margin-bottom: 2px;
+}
+.snap-btn:hover, .snap-btn:focus {
+  background: #457be7; color: #fff; border-color: #2230b5;
+  opacity: 1;
+}
+.snap-btn span { font-weight: bold; font-size: 0.93em; }
+.snap-btn .percent-label {
+  display: none; position: absolute; left: 115%; top: 50%; transform: translateY(-50%);
+  color: #1c3c6b; background: #f1f8ff; padding: 0.13em 0.45em; border-radius: 6px; font-size: 0.99em;
+  white-space: nowrap; box-shadow: 0 2px 8px #4442; border: 1px solid #cce;
+  pointer-events: none;
+}
+.snap-btn:hover .percent-label { display: block; }
+.preview-label {
+  color: #a0c5ff; font-weight: bold; margin-bottom: 0.6em; font-size: 1.01em; letter-spacing: 0.05em;
+  display: flex; align-items: center; gap: 0.7em;
+}
+.fullscreen-btn, .night-btn {
+  background: #415fff; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 1.04em;
+  padding: 0.26em 1.05em; opacity: 0.88; transition: background 0.18s;
+  margin-left: 0.3em;
+}
+.fullscreen-btn:hover, .night-btn:hover { background: #2230b5; opacity: 1; }
+.night-btn.active { background: #121b31; color: #c9ecff; }
+.fullscreen-iframe {
+  position: fixed !important; top: 0; left: 0; width: 100vw !important; height: 100vh !important;
+  background: #12151a !important; z-index: 1001 !important; margin: 0; border-radius: 0 !important;
+  border: none !important; box-shadow: none !important; display: block !important;
+}
+.fullscreen-close-btn {
+  position: fixed; 
+  top: 18px; 
+  right: 24px; 
+  z-index: 1011;
+  background: #ee2222; 
+  color: #fff; 
+  border: none; 
+  border-radius: 7px;
+  font-size: 1.15em; 
+  padding: 0.17em 1.05em; 
+  cursor: pointer; 
+  box-shadow: 0 2px 10px #3338;
+  transition: font-size 0.11s, padding 0.11s;
+  display: none;
+}
+.fullscreen-close-btn.show {
+  display: block !important;
+}
+.fullscreen-close-btn:hover { 
+  background: #b41414; 
+  font-size: 1.23em; 
+  padding: 0.17em 1.22em;
+}
+iframe {
+  flex: 1 1 0; 
+  width: 100%; 
+  min-height: 210px; 
+  border: 2px solid #31373f;
+  border-radius: 9px; 
+  background: #fff; 
+  box-shadow: 0 2px 8px #0002;
+  min-height: 0; 
+  height: 100%; 
+  max-height: 100%; 
+  overflow: auto;
+  display: block;
+}
+
+#execInfo { color:#ccc;font-size:0.98em; margin-bottom: 0.2em; display: block;}
+@media (max-width: 900px) {
+  .app-wrapper { flex-direction: column; height: auto; }
+  .sidebar { flex-direction: row; width: 100vw; height: 54px; border-right: none; border-bottom: 2px solid #222832; }
+  .main-col { min-width: 0; min-height: 0; height: auto; }
+  .main-area { flex-direction: column; height: auto; }
+  .divider { display: none; }
+  .editor-col, .preview-col { max-width: none; min-width: 0; width: 100%; height: auto; }
+  .preview-col { border-left: none; border-top: 1.5px solid #333; }
+  iframe { min-height: 140px; }
+  .run-btn { width: 100%; align-self: stretch; margin-left: 0; }
+}
+.tab-btn input { width: 62px; font-size: 1em; border-radius: 5px; border: none; padding: 0.05em; margin-right: 0.18em;}
+/* チートシートモーダル */
+.cheat-modal { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 3000;
+  background: rgba(30,32,60,0.87); display: flex; align-items: center; justify-content: center; }
+.cheat-modal-content { background: #fff; color: #182132; padding: 2.2em 2em 2em 2em; border-radius: 14px; min-width: 310px; max-width: 96vw;
+  box-shadow: 0 6px 36px #2228; font-size: 1.07em; position: relative; text-align: left; }
+.cheat-modal-content h3 { margin-top: 0; }
+.cheat-modal-close { position: absolute; top: 15px; right: 18px; color: #d33; font-size: 1.37em; border: none; background: none; cursor: pointer; }
+.cheat-modal ul { margin-top: 0.5em; padding-left: 1.3em;}
+.cheat-modal li { margin-bottom: 0.7em; }
+body.fullscreen-mode .header {
+  display: none !important;
+}
