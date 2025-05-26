@@ -23,7 +23,7 @@
   let sidebarEl, sidebarToggleBtnEl, tabButtonsEl, editorColEl, editorAreaEl,
       noteTextareaEl, runBtnEl, execInfoEl, saveNoticeEl, dividerEl,
       resultIframeEl, fullscreenBtnEl, fullscreenCloseBtnEl, nightBtnEl,
-      cheatModalEl, cheatModalCloseBtnEl;
+      cheatModalEl, cheatModalCloseBtnEl, returnToPreviewBtnEl; // Added returnToPreviewBtnEl
 
   function cacheDOMElements() {
     sidebarEl = document.getElementById('sidebar');
@@ -42,11 +42,10 @@
     nightBtnEl = document.getElementById('nightBtn');
     cheatModalEl = document.getElementById('cheatModal');
     cheatModalCloseBtnEl = document.getElementById('cheatModalCloseBtn');
+    returnToPreviewBtnEl = document.getElementById('returnToPreviewBtn'); // Cached the new button
   }
 
   // --- Helper Functions ---
-    // --- Helper Functions ---
-    // --- Helper Functions ---
 function escapeHtml(str) {
   return (str || '').replace(/[&<>"']/g, function(m) {
     switch(m) {
@@ -59,7 +58,6 @@ function escapeHtml(str) {
     }
   });
 }
-
 
   function formatDate(iso) {
     if (!iso) return 'なし';
@@ -243,10 +241,9 @@ function escapeHtml(str) {
     input.value = oldName;
 
     input.addEventListener('blur', () => {
-      // --- MODIFIED: Handle empty tab name ---
       let newName = input.value.trim();
       if (newName === "") {
-        newName = oldName; // Revert to old name if empty
+        newName = oldName; 
       }
       tabs[idx].name = newName;
       renderTabs();
@@ -311,13 +308,13 @@ function escapeHtml(str) {
     }
     const t = tabs[current];
     editorAreaEl.innerHTML = `
-      <label>HTML（1枚HTMLコピペ可）<br>
+      <label>HTML（1枚HTMLコピペ可）<button class="view-code-btn" data-target="html" title="HTMLコードを表示" style="margin-left: 5px; cursor: pointer; border: none; background: none; color: white; font-size: 1.1em;">👀</button><br>
         <textarea id="html" placeholder="HTMLや丸ごと1枚のHTMLコードも貼れます">${escapeHtml(t.html)}</textarea>
       </label>
-      <label>CSS<br>
+      <label>CSS<button class="view-code-btn" data-target="css" title="CSSコードを表示" style="margin-left: 5px; cursor: pointer; border: none; background: none; color: white; font-size: 1.1em;">👀</button><br>
         <textarea id="css">${escapeHtml(t.css)}</textarea>
       </label>
-      <label>JavaScript<br>
+      <label>JavaScript<button class="view-code-btn" data-target="js" title="JavaScriptコードを表示" style="margin-left: 5px; cursor: pointer; border: none; background: none; color: white; font-size: 1.1em;">👀</button><br>
         <textarea id="js">${escapeHtml(t.js)}</textarea>
       </label>
     `;
@@ -329,6 +326,13 @@ function escapeHtml(str) {
         textarea.addEventListener('keydown', handleEditorKeyDown);
         textarea.addEventListener('input', handleEditorInput);
       }
+    });
+
+    // Add event listeners for the new "View Code" buttons
+    editorAreaEl.querySelectorAll('.view-code-btn').forEach(btn => {
+      btn.addEventListener('click', function() {
+        viewCodeInPreview(this.dataset.target);
+      });
     });
   }
 
@@ -373,8 +377,40 @@ function escapeHtml(str) {
     tabs[current].note = noteTextareaEl.value || '';
   }
 
+  // --- View Code in Preview Function ---
+  function viewCodeInPreview(type) {
+    if (!tabs[current]) return;
+    let codeToView = '';
+    if (type === 'html') {
+      codeToView = document.getElementById('html')?.value || '';
+    } else if (type === 'css') {
+      codeToView = document.getElementById('css')?.value || '';
+    } else if (type === 'js') {
+      codeToView = document.getElementById('js')?.value || '';
+    }
+
+    const escapedCode = escapeHtml(codeToView);
+    const codeViewStyles = `
+      body { margin: 0; background-color: #282c34; color: #abb2bf; font-family: 'Fira Mono', monospace; font-size: 14px; line-height: 1.5; }
+      pre { margin: 0; padding: 1em; white-space: pre-wrap; word-wrap: break-word; }
+    `;
+    
+    resultIframeEl.srcdoc = `
+      <html>
+        <head><style>${codeViewStyles}</style></head>
+        <body><pre><code>${escapedCode}</code></pre></body>
+      </html>
+    `;
+    if (returnToPreviewBtnEl) {
+      returnToPreviewBtnEl.style.display = 'inline-block';
+    }
+  }
+
   // --- コード実行 ---
   function runCode() {
+    if (returnToPreviewBtnEl) { // Hide return button when running normal code
+        returnToPreviewBtnEl.style.display = 'none';
+    }
     saveCurrentTabData();
     saveTabs();
 
@@ -526,7 +562,6 @@ function escapeHtml(str) {
   }
 
   // --- チートシート ---
-  // --- MODIFIED: Added ESC key listener for cheat modal ---
   const handleCheatModalKeydown = (e) => {
     if (e.key === 'Escape') {
       hideCheatModal();
@@ -535,13 +570,12 @@ function escapeHtml(str) {
 
   function showCheatModal() {
     cheatModalEl.style.display = 'flex';
-    document.addEventListener('keydown', handleCheatModalKeydown); // Add listener when modal shown
+    document.addEventListener('keydown', handleCheatModalKeydown); 
   }
   function hideCheatModal() {
     cheatModalEl.style.display = 'none';
-    document.removeEventListener('keydown', handleCheatModalKeydown); // Remove listener when modal hidden
+    document.removeEventListener('keydown', handleCheatModalKeydown); 
   }
-  // --- END MODIFIED ---
 
   // --- プレビュー全画面 ---
   function setupFullscreen() {
@@ -648,6 +682,10 @@ ${err.message}`);
         pushUndo();
     });
 
+    if (returnToPreviewBtnEl) { // Add listener for the new button
+        returnToPreviewBtnEl.addEventListener('click', runCode);
+    }
+
     document.getElementById('exportBtn').addEventListener('click', exportTabs);
     document.getElementById('importFile').addEventListener('change', importTabs);
     document.getElementById('shareBtn').addEventListener('click', shareTabs);
@@ -666,10 +704,10 @@ ${err.message}`);
   function init() {
     cacheDOMElements();
     buildSidebar();
-    setupEventListeners();
+    setupEventListeners(); 
     
     loadTabs();
-    renderTabs();
+    renderTabs(); 
     runCode();
 
     setupDivider();
@@ -686,7 +724,8 @@ ${err.message}`);
     switchTab,
     addTab,
     removeTab,
-    editTabName
+    editTabName,
+    viewCodeInPreview // Exposing the new function
   };
 
   window.addEventListener('DOMContentLoaded', init);
