@@ -1,0 +1,194 @@
+name: Run tab history patch once
+
+on:
+  push:
+    branches:
+      - refactor-split-html-css-js
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout target branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/audit-followup-tab-history
+          fetch-depth: 0
+
+      - name: Patch and validate target branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('script.js')
+          text = path.read_text(encoding='utf-8')
+
+          replacements = [
+              (
+'''  function addTab() {
+    saveCurrentTabData();
+    tabs.push({name: `タブ${tabs.length + 1}`, html: '', css: '', js: '', note: '', lastExec: null, execCount: 0});
+    current = tabs.length - 1;
+    renderTabs();
+    saveTabs();
+    runCode();
+  }''',
+'''  function addTab() {
+    saveCurrentTabData();
+    if (tabs.length >= MAX_TABS) {
+      showSaveNotice(`タブは最大${MAX_TABS}件までです`);
+      return;
+    }
+    pushUndo();
+    tabs.push({name: `タブ${tabs.length + 1}`, html: '', css: '', js: '', note: '', lastExec: null, execCount: 0});
+    current = tabs.length - 1;
+    renderTabs();
+    saveTabs();
+    runCode();
+  }'''
+              ),
+              (
+'''  function removeTab(idx) {
+    if (tabs.length === 1) return;
+    const wasCurrent = idx === current;
+    tabs.splice(idx, 1);
+    if (current >= tabs.length) {
+      current = tabs.length - 1;
+    }
+    renderTabs();
+    saveTabs();
+    if (wasCurrent) {
+      runCode();
+    }
+  }''',
+'''  function removeTab(idx) {
+    if (!Number.isInteger(idx) || idx < 0 || idx >= tabs.length || tabs.length === 1) return;
+    saveCurrentTabData();
+    pushUndo();
+    const wasCurrent = idx === current;
+    tabs.splice(idx, 1);
+    if (idx < current) {
+      current--;
+    } else if (current >= tabs.length) {
+      current = tabs.length - 1;
+    }
+    renderTabs();
+    saveTabs();
+    if (wasCurrent) {
+      runCode();
+    }
+  }'''
+              ),
+              (
+'''    input.type = 'text';
+    input.value = oldName;''',
+'''    input.type = 'text';
+    input.value = oldName;
+    input.maxLength = MAX_TAB_NAME_LENGTH;'''
+              ),
+              (
+'''      tabs[idx].name = newName;
+      renderTabs();
+      saveTabs();''',
+'''      if (newName !== oldName) {
+        pushUndo();
+        tabs[idx].name = newName;
+      }
+      renderTabs();
+      saveTabs();'''
+              ),
+              (
+'''  function undo() {
+    if (!undoStack.length) return;
+    redoStack.push(JSON.stringify(tabs));
+    const lastState = undoStack.pop();
+    tabs = JSON.parse(lastState);
+    current = Math.min(current, tabs.length - 1);
+    renderTabs();
+    runCode();
+    saveTabs();
+  }''',
+'''  function undo() {
+    if (!undoStack.length) return;
+    redoStack.push(JSON.stringify(tabs));
+    const lastState = undoStack.pop();
+    tabs = JSON.parse(lastState);
+    current = Math.min(current, tabs.length - 1);
+    renderTabs();
+    runCode({ recordExecution: false });
+    saveTabs();
+  }'''
+              ),
+              (
+'''  function redo() {
+    if (!redoStack.length) return;
+    undoStack.push(JSON.stringify(tabs));
+    const nextState = redoStack.pop();
+    tabs = JSON.parse(nextState);
+    current = Math.min(current, tabs.length - 1);
+    renderTabs();
+    runCode();
+    saveTabs();
+  }''',
+'''  function redo() {
+    if (!redoStack.length) return;
+    undoStack.push(JSON.stringify(tabs));
+    const nextState = redoStack.pop();
+    tabs = JSON.parse(nextState);
+    current = Math.min(current, tabs.length - 1);
+    renderTabs();
+    runCode({ recordExecution: false });
+    saveTabs();
+  }'''
+              ),
+              ("  function runCode() {", "  function runCode({ recordExecution = true } = {}) {"),
+              (
+'''    resultIframeEl.srcdoc = code;
+    t.lastExec = new Date().toISOString();
+    t.execCount = (t.execCount || 0) + 1;
+    showExecInfo();''',
+'''    resultIframeEl.srcdoc = code;
+    if (recordExecution) {
+      t.lastExec = new Date().toISOString();
+      t.execCount = (t.execCount || 0) + 1;
+    }
+    showExecInfo();'''
+              ),
+          ]
+
+          for old, new in replacements:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'Expected exactly one match, found {count}: {old[:90]!r}')
+              text = text.replace(old, new, 1)
+
+          path.write_text(text, encoding='utf-8')
+          PY
+
+          node --check script.js
+          grep -q 'runCode({ recordExecution: false })' script.js
+          grep -q 'input.maxLength = MAX_TAB_NAME_LENGTH' script.js
+          grep -q 'idx < current' script.js
+
+          rm -f .github/workflows/apply-tab-history-fix.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add script.js .github/workflows/apply-tab-history-fix.yml
+          git commit -m "fix: タブ操作のUndoと位置管理を修正"
+          git push origin HEAD:fix/audit-followup-tab-history
+
+      - name: Remove controller workflow from default branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin refactor-split-html-css-js
+          git checkout -B refactor-split-html-css-js origin/refactor-split-html-css-js
+          rm -f .github/workflows/run-tab-history-patch.yml
+          git add .github/workflows/run-tab-history-patch.yml
+          git commit -m "chore: remove one-time tab history patch"
+          git push origin HEAD:refactor-split-html-css-js
