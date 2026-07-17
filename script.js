@@ -7,6 +7,11 @@
   const PREVIEW_NIGHT_KEY = 'miniCodeTabs_previewNight';
   const MAX_UNDO_STACK = 100;
   const DEFAULT_TAB_NAME = "無題"; // --- ADDED: Default tab name ---
+    const MAX_TABS = 50;
+    const MAX_TAB_NAME_LENGTH = 100;
+    const MAX_TAB_CONTENT_LENGTH = 500000;
+    const MAX_TOTAL_CONTENT_LENGTH = 1500000;
+    const MAX_IMPORT_FILE_SIZE = 2 * 1024 * 1024;
 
   // --- 状態 ---
   let tabs = [];
@@ -93,6 +98,73 @@ function escapeHtml(str) {
     return uint8ArrayToString(uint8Array);
   }
 
+  function toBase64Url(str) {
+    return toBase64(str)
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/g, '');
+  }
+
+  function fromBase64Url(base64UrlStr) {
+    const normalized = base64UrlStr
+      .replace(/ /g, '+')
+      .replace(/-/g, '+')
+      .replace(/_/g, '/');
+    const padding = '='.repeat((4 - normalized.length % 4) % 4);
+    return fromBase64(normalized + padding);
+  }
+
+  function validateTabsData(data) {
+    if (!Array.isArray(data) || data.length === 0 || data.length > MAX_TABS) {
+      throw new Error(`タブ数は1〜${MAX_TABS}件である必要があります。`);
+    }
+
+    let totalLength = 0;
+    return data.map((tab, index) => {
+      if (!tab || typeof tab !== 'object' || Array.isArray(tab)) {
+        throw new Error(`タブ${index + 1}の形式が正しくありません。`);
+      }
+
+      const readText = (key, fallback = '') => {
+        const value = tab[key];
+        if (value === undefined || value === null) return fallback;
+        if (typeof value !== 'string') {
+          throw new Error(`タブ${index + 1}の${key}は文字列である必要があります。`);
+        }
+        return value;
+      };
+
+      const name = readText('name', `${DEFAULT_TAB_NAME}${index + 1}`);
+      const html = readText('html');
+      const css = readText('css');
+      const js = readText('js');
+      const note = readText('note');
+
+      if (name.length === 0 || name.length > MAX_TAB_NAME_LENGTH) {
+        throw new Error(`タブ${index + 1}の名前が長すぎるか空です。`);
+      }
+      for (const [key, value] of Object.entries({ html, css, js, note })) {
+        if (value.length > MAX_TAB_CONTENT_LENGTH) {
+          throw new Error(`タブ${index + 1}の${key}が大きすぎます。`);
+        }
+      }
+
+      totalLength += name.length + html.length + css.length + js.length + note.length;
+      if (totalLength > MAX_TOTAL_CONTENT_LENGTH) {
+        throw new Error('インポートデータ全体が大きすぎます。');
+      }
+
+      const lastExec = tab.lastExec === null || tab.lastExec === undefined
+        ? null
+        : readText('lastExec');
+      const execCount = Number.isInteger(tab.execCount) && tab.execCount >= 0
+        ? tab.execCount
+        : 0;
+
+      return { name, html, css, js, note, lastExec, execCount };
+    });
+  }
+
   // --- サイドバーUI構築 ---
   function buildSidebar() {
     sidebarEl.innerHTML = `
@@ -148,14 +220,12 @@ function escapeHtml(str) {
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.has('data')) {
       try {
-        const json = fromBase64(urlParams.get('data'));
+        const json = fromBase64Url(urlParams.get('data'));
         const arr = JSON.parse(json);
-        if (Array.isArray(arr) && arr.length) {
-          tabs = arr;
-          current = 0;
-          history.replaceState({}, document.title, location.pathname);
-          return;
-        }
+        tabs = validateTabsData(arr);
+        current = 0;
+        history.replaceState({}, document.title, location.pathname);
+        return;
       } catch (e) {
         console.error("Failed to load tabs from URL:", e);
       }
@@ -165,11 +235,9 @@ function escapeHtml(str) {
     if (saved) {
       try {
         const data = JSON.parse(saved);
-        if (Array.isArray(data) && data.length > 0) {
-          tabs = data;
-          current = Math.min(current, tabs.length - 1);
-          return;
-        }
+        tabs = validateTabsData(data);
+        current = Math.min(current, tabs.length - 1);
+        return;
       } catch (e) {
         console.error("Failed to load tabs from localStorage:", e);
       }
@@ -179,7 +247,14 @@ function escapeHtml(str) {
   }
 
   function saveTabs() {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(tabs));
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(tabs));
+      return true;
+    } catch (error) {
+      console.error('Failed to save tabs to localStorage:', error);
+      if (saveNoticeEl) showSaveNotice('保存容量を超えたため保存できませんでした');
+      return false;
+    }
   }
 
   function renderTabs() {
@@ -263,9 +338,9 @@ function escapeHtml(str) {
   }
 
   // --- Undo/Redo機能 ---
-  function pushUndo() {
+  function pushUndo(serializedState = JSON.stringify(tabs)) {
     if (lockStack) return;
-    const data = JSON.stringify(tabs);
+    const data = serializedState;
     if (undoStack.length > 0 && undoStack[undoStack.length - 1] === data) return;
 
     undoStack.push(data);
@@ -363,10 +438,11 @@ function escapeHtml(str) {
 
   function handleEditorInput() {
     if (!tabs[current]) return;
+    const previousState = JSON.stringify(tabs);
     tabs[current].html = document.getElementById('html')?.value || '';
     tabs[current].css = document.getElementById('css')?.value || '';
     tabs[current].js = document.getElementById('js')?.value || '';
-    pushUndo();
+    pushUndo(previousState);
   }
 
   function saveCurrentTabData() {
@@ -632,21 +708,23 @@ function escapeHtml(str) {
   function importTabs(e) {
     const file = e.target.files[0];
     if (!file) return;
+    if (file.size > MAX_IMPORT_FILE_SIZE) {
+      alert('インポート失敗：ファイルサイズは2MB以下にしてください。');
+      e.target.value = null;
+      return;
+    }
     const reader = new FileReader();
     reader.onload = function(ev) {
       try {
         const importedData = JSON.parse(ev.target.result);
-        if (Array.isArray(importedData) && importedData.length > 0) {
-          pushUndo();
-          tabs = importedData;
-          current = 0;
-          renderTabs();
-          runCode();
-          saveTabs();
-          alert("タブデータをインポートしました！");
-        } else {
-          alert("インポート失敗：無効なデータ形式です。");
-        }
+        const validatedTabs = validateTabsData(importedData);
+        pushUndo();
+        tabs = validatedTabs;
+        current = 0;
+        renderTabs();
+        runCode();
+        saveTabs();
+        alert("タブデータをインポートしました！");
       } catch (err) {
         alert(`インポート失敗：JSONの解析中にエラーが発生しました。
 ${err.message}`);
@@ -664,9 +742,12 @@ ${err.message}`);
     try {
       const dataToShare = tabs.length > 3 ? tabs.slice(0, 3) : tabs;
       const jsonString = JSON.stringify(dataToShare);
-      const base64Param = toBase64(jsonString);
-      const shareUrl = `${location.origin}${location.pathname}?data=${base64Param}`;
-      prompt("このURLをコピーして共有できます！（内容が長すぎる場合は先頭3タブ分まで）", shareUrl);
+      const base64Param = toBase64Url(jsonString);
+      const shareUrl = new URL(location.href);
+        shareUrl.search = '';
+        shareUrl.hash = '';
+        shareUrl.searchParams.set('data', base64Param);
+        prompt("このURLをコピーして共有できます！（内容が長すぎる場合は先頭3タブ分まで）", shareUrl.toString());
     } catch (err) {
       alert("共有URLの生成に失敗しました。データが大きすぎる可能性があります。");
       console.error("Share URL generation error:", err);
@@ -678,8 +759,9 @@ ${err.message}`);
     sidebarToggleBtnEl.addEventListener('click', handleSidebarToggle);
     runBtnEl.addEventListener('click', runCode);
     noteTextareaEl.addEventListener('input', () => {
+        const previousState = JSON.stringify(tabs);
         saveCurrentTabData();
-        pushUndo();
+        pushUndo(previousState);
     });
 
     if (returnToPreviewBtnEl) { // Add listener for the new button
