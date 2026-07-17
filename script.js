@@ -281,6 +281,11 @@ function escapeHtml(str) {
 
   function addTab() {
     saveCurrentTabData();
+    if (tabs.length >= MAX_TABS) {
+      showSaveNotice(`タブは最大${MAX_TABS}件です`);
+      return;
+    }
+    pushUndo();
     tabs.push({name: `タブ${tabs.length + 1}`, html: '', css: '', js: '', note: '', lastExec: null, execCount: 0});
     current = tabs.length - 1;
     renderTabs();
@@ -290,9 +295,13 @@ function escapeHtml(str) {
 
   function removeTab(idx) {
     if (tabs.length === 1) return;
+    saveCurrentTabData();
+    pushUndo();
     const wasCurrent = idx === current;
     tabs.splice(idx, 1);
-    if (current >= tabs.length) {
+    if (idx < current) {
+      current--;
+    } else if (current >= tabs.length) {
       current = tabs.length - 1;
     }
     renderTabs();
@@ -313,14 +322,19 @@ function escapeHtml(str) {
     const oldName = tabs[idx].name;
     const input = document.createElement('input');
     input.type = 'text';
+    input.maxLength = MAX_TAB_NAME_LENGTH;
     input.value = oldName;
 
     input.addEventListener('blur', () => {
       let newName = input.value.trim();
       if (newName === "") {
-        newName = oldName; 
+        newName = oldName;
       }
-      tabs[idx].name = newName;
+      if (newName !== oldName) {
+        saveCurrentTabData();
+        pushUndo();
+        tabs[idx].name = newName;
+      }
       renderTabs();
       saveTabs();
     });
@@ -355,7 +369,7 @@ function escapeHtml(str) {
     tabs = JSON.parse(lastState);
     current = Math.min(current, tabs.length - 1);
     renderTabs();
-    runCode();
+    runCode({ recordExecution: false });
     saveTabs();
   }
 
@@ -366,7 +380,7 @@ function escapeHtml(str) {
     tabs = JSON.parse(nextState);
     current = Math.min(current, tabs.length - 1);
     renderTabs();
-    runCode();
+    runCode({ recordExecution: false });
     saveTabs();
   }
 
@@ -483,7 +497,7 @@ function escapeHtml(str) {
   }
 
   // --- コード実行 ---
-  function runCode() {
+  function runCode({ recordExecution = true } = {}) {
     if (returnToPreviewBtnEl) { // Hide return button when running normal code
         returnToPreviewBtnEl.style.display = 'none';
     }
@@ -539,8 +553,10 @@ function escapeHtml(str) {
       `;
     }
     resultIframeEl.srcdoc = code;
-    t.lastExec = new Date().toISOString();
-    t.execCount = (t.execCount || 0) + 1;
+    if (recordExecution) {
+      t.lastExec = new Date().toISOString();
+      t.execCount = (t.execCount || 0) + 1;
+    }
     showExecInfo();
   }
 
