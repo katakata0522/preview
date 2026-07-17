@@ -1,0 +1,121 @@
+[
+  {
+    "severity": "MEDIUM",
+    "category": "html-sink",
+    "path": "script.js",
+    "line": 170,
+    "message": "innerHTML assignment"
+  },
+  {
+    "severity": "MEDIUM",
+    "category": "html-sink",
+    "path": "script.js",
+    "line": 261,
+    "message": "innerHTML assignment"
+  },
+  {
+    "severity": "MEDIUM",
+    "category": "html-sink",
+    "path": "script.js",
+    "line": 379,
+    "message": "innerHTML assignment"
+  },
+  {
+    "severity": "MEDIUM",
+    "category": "html-sink",
+    "path": "script.js",
+    "line": 385,
+    "message": "innerHTML assignment"
+  },
+  {
+    "severity": "MEDIUM",
+    "category": "html-sink",
+    "path": "script.js",
+    "line": 549,
+    "message": "innerHTML assignment"
+  },
+  {
+    "severity": "MEDIUM",
+    "category": "html-sink",
+    "path": "script.js",
+    "line": 554,
+    "message": "innerHTML assignment"
+  },
+  {
+    "severity": "MEDIUM",
+    "category": "html-sink",
+    "path": "script.js",
+    "line": 565,
+    "message": "innerHTML assignment"
+  },
+  {
+    "severity": "LOW",
+    "category": "storage",
+    "path": "script.js",
+    "line": 22,
+    "message": "localStorage is user-controlled"
+  },
+  {
+    "severity": "LOW",
+    "category": "storage",
+    "path": "script.js",
+    "line": 234,
+    "message": "localStorage is user-controlled"
+  },
+  {
+    "severity": "LOW",
+    "category": "storage",
+    "path": "script.js",
+    "line": 242,
+    "message": "localStorage is user-controlled"
+  },
+  {
+    "severity": "LOW",
+    "category": "storage",
+    "path": "script.js",
+    "line": 251,
+    "message": "localStorage is user-controlled"
+  },
+  {
+    "severity": "LOW",
+    "category": "storage",
+    "path": "script.js",
+    "line": 254,
+    "message": "localStorage is user-controlled"
+  },
+  {
+    "severity": "LOW",
+    "category": "storage",
+    "path": "script.js",
+    "line": 588,
+    "message": "localStorage is user-controlled"
+  },
+  {
+    "severity": "LOW",
+    "category": "storage",
+    "path": "script.js",
+    "line": 614,
+    "message": "localStorage is user-controlled"
+  },
+  {
+    "severity": "LOW",
+    "category": "storage",
+    "path": "script.js",
+    "line": 625,
+    "message": "localStorage is user-controlled"
+  },
+  {
+    "severity": "LOW",
+    "category": "storage",
+    "path": "script.js",
+    "line": 635,
+    "message": "localStorage is user-controlled"
+  },
+  {
+    "severity": "LOW",
+    "category": "storage",
+    "path": "script.js",
+    "line": 686,
+    "message": "localStorage is user-controlled"
+  }
+]
