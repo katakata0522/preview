@@ -33,6 +33,18 @@ HTML・CSS・JavaScriptを入力し、ブラウザ内のiframeで動作確認で
 - タブデータ: `miniCodeTabs_v2.3`
 - エディタ幅: `miniCodeTabs_editorWidth_v2.3`
 - プレビューナイト設定: `miniCodeTabs_previewNight`
+- 破壊的操作前の直近バックアップ: `miniCodeTabs_v2.3_backup`
+
+共有URL、JSON Import、読み込めない保存データの初期化で既存データを置き換える前に、直前の保存内容をバックアップキーへ退避します。バックアップには作成日時、退避理由、元のJSON文字列が入ります。
+
+## 安全な読込と実行
+
+- 保存済みコードはページを開いただけでは実行しません
+- 共有URLの内容は一時表示し、既存の保存データを自動で置き換えません
+- 共有コードは内容を確認してから手動で実行します
+- 読み込めないlocalStorageデータは自動上書きせず、ダウンロードまたは初期化を選べます
+- iframeは`sandbox="allow-scripts"`で親画面と分離します
+- Shareは現在選択中の1タブだけを対象にします
 
 localStorageはURLのパス単位ではなく、原則として`プロトコル + ホスト + ポート`からなる**オリジン単位**で共有されます。
 
@@ -55,3 +67,14 @@ localStorageはURLのパス単位ではなく、原則として`プロトコル 
 `refactor-split-html-css-js`
 
 ブランチ名を`main`へ整理する場合も、公開設定や自動処理への参照を確認してから行ってください。
+
+## 開発時の確認
+
+Node.js 22を使用します。
+
+```bash
+npm ci
+npm run check
+```
+
+`npm run check`では、JavaScript構文、HTML、CSS構文、保存・共有・Import・コード実行・アクセシビリティの回帰テストを実行します。GitHub ActionsでもPull Requestと既定ブランチへのpush時に同じ確認を行います。

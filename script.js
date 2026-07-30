@@ -1,34 +1,65 @@
-(function() { // IIFE Start
+(function () {
   'use strict';
 
-  // --- 定数 ---
   const STORAGE_KEY = 'miniCodeTabs_v2.3';
+  const BACKUP_STORAGE_KEY = 'miniCodeTabs_v2.3_backup';
   const WIDTH_KEY = 'miniCodeTabs_editorWidth_v2.3';
   const PREVIEW_NIGHT_KEY = 'miniCodeTabs_previewNight';
   const MAX_UNDO_STACK = 100;
-  const DEFAULT_TAB_NAME = "無題"; // --- ADDED: Default tab name ---
-    const MAX_TABS = 50;
-    const MAX_TAB_NAME_LENGTH = 100;
-    const MAX_TAB_CONTENT_LENGTH = 500000;
-    const MAX_TOTAL_CONTENT_LENGTH = 1500000;
-    const MAX_IMPORT_FILE_SIZE = 2 * 1024 * 1024;
+  const MAX_TABS = 50;
+  const MAX_TAB_NAME_LENGTH = 100;
+  const MAX_TAB_CONTENT_LENGTH = 500000;
+  const MAX_TOTAL_CONTENT_LENGTH = 1500000;
+  const MAX_IMPORT_FILE_SIZE = 2 * 1024 * 1024;
+  const MAX_SHARE_URL_LENGTH = 8000;
+  const EDIT_HISTORY_DELAY = 600;
+  const AUTOSAVE_DELAY = 800;
 
-  // --- 状態 ---
   let tabs = [];
   let current = 0;
-  let isDragging = false;
-  let dragStartX = 0, dragStartWidth = 0;
-  let fullscreenMode = false;
-  let previewNight = localStorage.getItem(PREVIEW_NIGHT_KEY) === '1';
+  let workspaceMode = 'local';
+  let localWorkspaceSnapshot = null;
+  let corruptSavedData = null;
+  let startupError = '';
   let sidebarOpen = true;
-  let undoStack = [], redoStack = [];
-  let lockStack = false;
+  let previewNight = false;
+  let previewMode = 'empty';
+  let fullscreenMode = false;
+  let fullscreenReturnFocus = null;
+  let modalReturnFocus = null;
+  let undoStack = [];
+  let redoStack = [];
+  let pendingEditSnapshot = null;
+  let editHistoryTimer = null;
+  let autosaveTimer = null;
+  let noticeTimer = null;
+  let isDragging = false;
+  let dragStartX = 0;
+  let dragStartWidth = 0;
 
-  // --- DOM要素キャッシュ ---
-  let sidebarEl, sidebarToggleBtnEl, tabButtonsEl, editorColEl, editorAreaEl,
-      noteTextareaEl, runBtnEl, execInfoEl, saveNoticeEl, dividerEl,
-      resultIframeEl, fullscreenBtnEl, fullscreenCloseBtnEl, nightBtnEl,
-      cheatModalEl, cheatModalCloseBtnEl, returnToPreviewBtnEl; // Added returnToPreviewBtnEl
+  let sidebarEl;
+  let sidebarToggleBtnEl;
+  let tabButtonsEl;
+  let editorColEl;
+  let editorAreaEl;
+  let noteTextareaEl;
+  let runBtnEl;
+  let execInfoEl;
+  let saveNoticeEl;
+  let dividerEl;
+  let resultIframeEl;
+  let fullscreenBtnEl;
+  let fullscreenCloseBtnEl;
+  let nightBtnEl;
+  let stopPreviewBtnEl;
+  let cheatModalEl;
+  let cheatModalCloseBtnEl;
+  let returnToPreviewBtnEl;
+  let systemNoticeEl;
+  let systemNoticeTitleEl;
+  let systemNoticeTextEl;
+  let systemNoticePrimaryEl;
+  let systemNoticeSecondaryEl;
 
   function cacheDOMElements() {
     sidebarEl = document.getElementById('sidebar');
@@ -45,73 +76,52 @@
     fullscreenBtnEl = document.getElementById('fullscreenBtn');
     fullscreenCloseBtnEl = document.getElementById('fullscreenCloseBtn');
     nightBtnEl = document.getElementById('nightBtn');
+    stopPreviewBtnEl = document.getElementById('stopPreviewBtn');
     cheatModalEl = document.getElementById('cheatModal');
     cheatModalCloseBtnEl = document.getElementById('cheatModalCloseBtn');
-    returnToPreviewBtnEl = document.getElementById('returnToPreviewBtn'); // Cached the new button
+    returnToPreviewBtnEl = document.getElementById('returnToPreviewBtn');
+    systemNoticeEl = document.getElementById('systemNotice');
+    systemNoticeTitleEl = document.getElementById('systemNoticeTitle');
+    systemNoticeTextEl = document.getElementById('systemNoticeText');
+    systemNoticePrimaryEl = document.getElementById('systemNoticePrimary');
+    systemNoticeSecondaryEl = document.getElementById('systemNoticeSecondary');
   }
 
-  // --- Helper Functions ---
-function escapeHtml(str) {
-  return (str || '').replace(/[&<>"']/g, function(m) {
-    switch(m) {
-      case '&': return '&amp;';
-      case '<': return '&lt;';
-      case '>': return '&gt;';
-      case '"': return '&quot;';
-      case "'": return '&#39;';
-      default: return m;
-    }
-  });
-}
+  function makeDefaultTabs() {
+    return [{ name: 'タブ1', html: '', css: '', js: '', note: '', lastExec: null, execCount: 0 }];
+  }
+
+  function cloneTabs(value = tabs) {
+    return JSON.parse(JSON.stringify(value));
+  }
+
+  function escapeHtml(value) {
+    return String(value || '').replace(/[&<>"']/g, (character) => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    })[character]);
+  }
 
   function formatDate(iso) {
     if (!iso) return 'なし';
-    const d = new Date(iso);
-    return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return 'なし';
+    return new Intl.DateTimeFormat('ja-JP', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit'
+    }).format(date);
   }
 
-  function stringToUint8Array(str) {
-    const encoder = new TextEncoder();
-    return encoder.encode(str);
-  }
-
-  function uint8ArrayToString(uint8Array) {
-    const decoder = new TextDecoder();
-    return decoder.decode(uint8Array);
-  }
-
-  function toBase64(str) {
-    const uint8Array = stringToUint8Array(str);
-    let binaryString = '';
-    uint8Array.forEach((byte) => {
-      binaryString += String.fromCharCode(byte);
-    });
-    return btoa(binaryString);
-  }
-
-  function fromBase64(base64Str) {
-    const binaryString = atob(base64Str);
-    const uint8Array = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-      uint8Array[i] = binaryString.charCodeAt(i);
-    }
-    return uint8ArrayToString(uint8Array);
-  }
-
-  function toBase64Url(str) {
-    return toBase64(str)
-      .replace(/\+/g, '-')
-      .replace(/\//g, '_')
-      .replace(/=+$/g, '');
-  }
-
-  function fromBase64Url(base64UrlStr) {
-    const normalized = base64UrlStr
-      .replace(/ /g, '+')
-      .replace(/-/g, '+')
-      .replace(/_/g, '/');
-    const padding = '='.repeat((4 - normalized.length % 4) % 4);
-    return fromBase64(normalized + padding);
+  function getTotalContentLength(value = tabs) {
+    return value.reduce((total, tab) => (
+      total + tab.name.length + tab.html.length + tab.css.length + tab.js.length + tab.note.length
+    ), 0);
   }
 
   function validateTabsData(data) {
@@ -134,702 +144,966 @@ function escapeHtml(str) {
         return value;
       };
 
-      const name = readText('name', `${DEFAULT_TAB_NAME}${index + 1}`);
+      const name = readText('name', `無題${index + 1}`);
       const html = readText('html');
       const css = readText('css');
       const js = readText('js');
       const note = readText('note');
 
-      if (name.length === 0 || name.length > MAX_TAB_NAME_LENGTH) {
-        throw new Error(`タブ${index + 1}の名前が長すぎるか空です。`);
+      if (name.trim().length === 0 || name.length > MAX_TAB_NAME_LENGTH) {
+        throw new Error(`タブ${index + 1}の名前が空か、${MAX_TAB_NAME_LENGTH}文字を超えています。`);
       }
+
       for (const [key, value] of Object.entries({ html, css, js, note })) {
         if (value.length > MAX_TAB_CONTENT_LENGTH) {
-          throw new Error(`タブ${index + 1}の${key}が大きすぎます。`);
+          throw new Error(`タブ${index + 1}の${key}が${MAX_TAB_CONTENT_LENGTH}文字を超えています。`);
         }
       }
 
       totalLength += name.length + html.length + css.length + js.length + note.length;
       if (totalLength > MAX_TOTAL_CONTENT_LENGTH) {
-        throw new Error('インポートデータ全体が大きすぎます。');
+        throw new Error(`全体の文字数が${MAX_TOTAL_CONTENT_LENGTH}文字を超えています。`);
       }
 
-      const lastExec = tab.lastExec === null || tab.lastExec === undefined
+      const rawLastExec = tab.lastExec === null || tab.lastExec === undefined
         ? null
         : readText('lastExec');
-      const execCount = Number.isInteger(tab.execCount) && tab.execCount >= 0
-        ? tab.execCount
-        : 0;
+      const lastExec = rawLastExec && !Number.isNaN(Date.parse(rawLastExec)) ? rawLastExec : null;
+      const execCount = Number.isSafeInteger(tab.execCount) && tab.execCount >= 0 ? tab.execCount : 0;
 
       return { name, html, css, js, note, lastExec, execCount };
     });
   }
 
-  // --- サイドバーUI構築 ---
-  function buildSidebar() {
-    sidebarEl.innerHTML = `
-      <button class="sidebar-btn" id="exportBtn" title="JSONでエクスポート" aria-label="JSONでエクスポート">
-        <span>⇩</span>
-        <span>Export</span>
-        <div class="sidebar-tooltip" style="font-size:0.93em;">タブ全体をJSON保存</div>
-      </button>
-      <label class="sidebar-btn" for="importFile" tabindex="0" title="JSONでインポート" aria-label="JSONでインポート">
-        <span>⇧</span>
-        <span>Import</span>
-        <input type="file" id="importFile" accept="application/json">
-        <div class="sidebar-tooltip" style="font-size:0.93em;">JSONファイルから復元</div>
-      </label>
-      <button class="sidebar-btn" id="shareBtn" title="共有URL生成" aria-label="共有URL生成">
-        <span>🔗</span>
-        <span>Share</span>
-        <div class="sidebar-tooltip" style="font-size:0.93em;">短い内容をURLで共有</div>
-      </button>
-      <button class="sidebar-btn" id="undoBtn" title="元に戻す (Ctrl+Z)" aria-label="元に戻す">
-        <span>↶</span>
-        <span>Undo</span>
-        <div class="sidebar-tooltip" style="font-size:0.93em;">ひとつ前に戻す</div>
-      </button>
-      <button class="sidebar-btn" id="redoBtn" title="やり直し (Ctrl+Y)" aria-label="やり直し">
-        <span>↷</span>
-        <span>Redo</span>
-        <div class="sidebar-tooltip" style="font-size:0.93em;">やり直し</div>
-      </button>
-      <button class="sidebar-btn" id="cheatBtn" title="ショートカット一覧" aria-label="ショートカット一覧表示">
-        <span>？</span>
-        <span>Help</span>
-        <div class="sidebar-tooltip" style="font-size:0.93em;">ショートカット・使い方</div>
-      </button>
-      <button class="sidebar-btn" id="clearBtn" title="全クリア" aria-label="現在のタブの内容を全クリア">
-        <span>✖</span>
-        <span>Clear</span>
-        <div class="sidebar-tooltip" style="font-size:0.93em;">全入力を消去</div>
-      </button>
-    `;
+  function showSaveNotice(message, tone = 'info', duration = 2600) {
+    clearTimeout(noticeTimer);
+    saveNoticeEl.textContent = message;
+    saveNoticeEl.className = `save-notice${tone === 'info' ? '' : ` ${tone}`}`;
+    if (duration > 0) {
+      noticeTimer = setTimeout(() => {
+        saveNoticeEl.textContent = '';
+        saveNoticeEl.className = 'save-notice';
+      }, duration);
+    }
   }
 
-  // --- ヘッダー・サイドバー制御 ---
+  function showSystemNotice({ title, message, tone = 'info', primary, secondary }) {
+    systemNoticeTitleEl.textContent = title;
+    systemNoticeTextEl.textContent = message;
+    systemNoticeEl.dataset.tone = tone;
+    systemNoticeEl.hidden = false;
+
+    for (const [button, action] of [
+      [systemNoticePrimaryEl, primary],
+      [systemNoticeSecondaryEl, secondary]
+    ]) {
+      button.onclick = null;
+      if (action) {
+        button.textContent = action.label;
+        button.onclick = action.onClick;
+        button.hidden = false;
+      } else {
+        button.hidden = true;
+      }
+    }
+  }
+
+  function hideSystemNotice() {
+    systemNoticeEl.hidden = true;
+    systemNoticePrimaryEl.onclick = null;
+    systemNoticeSecondaryEl.onclick = null;
+  }
+
+  function downloadTextFile(content, filename, type = 'application/json') {
+    const blob = new Blob([content], { type });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function persistCandidate(candidateTabs, { destructive = false, reason = 'save' } = {}) {
+    try {
+      const validated = validateTabsData(candidateTabs);
+      const serialized = JSON.stringify(validated);
+      const previous = localStorage.getItem(STORAGE_KEY);
+
+      if (destructive && previous !== null && previous !== serialized) {
+        localStorage.setItem(BACKUP_STORAGE_KEY, JSON.stringify({
+          createdAt: new Date().toISOString(),
+          reason,
+          raw: previous
+        }));
+      }
+
+      localStorage.setItem(STORAGE_KEY, serialized);
+      return true;
+    } catch (error) {
+      console.error('Failed to persist tabs:', error);
+      showSaveNotice(`保存できませんでした：${error.message || '保存容量を確認してください。'}`, 'error', 0);
+      return false;
+    }
+  }
+
+  function saveTabs({ notify = false } = {}) {
+    if (workspaceMode === 'shared') {
+      showSaveNotice('共有データはまだ保存されていません。上の「この内容を保存」を選んでください。', 'warning', 0);
+      return false;
+    }
+    if (workspaceMode === 'recovery') {
+      showSaveNotice('保存データの復旧判断が必要です。上の案内からバックアップまたは初期化を選んでください。', 'warning', 0);
+      return false;
+    }
+    if (!saveCurrentTabData()) return false;
+
+    const saved = persistCandidate(tabs);
+    if (saved && notify) showSaveNotice('保存しました');
+    return saved;
+  }
+
+  function scheduleAutosave() {
+    if (workspaceMode !== 'local') return;
+    clearTimeout(autosaveTimer);
+    autosaveTimer = setTimeout(() => saveTabs(), AUTOSAVE_DELAY);
+  }
+
+  function serializeState() {
+    return JSON.stringify({ tabs, current });
+  }
+
+  function restoreState(serialized) {
+    const state = JSON.parse(serialized);
+    tabs = validateTabsData(state.tabs);
+    current = Math.max(0, Math.min(Number.isInteger(state.current) ? state.current : 0, tabs.length - 1));
+  }
+
+  function pushUndo(serializedState = serializeState()) {
+    if (undoStack.at(-1) === serializedState) return;
+    undoStack.push(serializedState);
+    if (undoStack.length > MAX_UNDO_STACK) undoStack.shift();
+    redoStack = [];
+  }
+
+  function beginEditHistory(previousState) {
+    if (pendingEditSnapshot === null) pendingEditSnapshot = previousState;
+    clearTimeout(editHistoryTimer);
+    editHistoryTimer = setTimeout(flushPendingEditHistory, EDIT_HISTORY_DELAY);
+  }
+
+  function flushPendingEditHistory() {
+    clearTimeout(editHistoryTimer);
+    if (pendingEditSnapshot !== null) {
+      pushUndo(pendingEditSnapshot);
+      pendingEditSnapshot = null;
+    }
+  }
+
+  function undo() {
+    flushPendingEditHistory();
+    if (!undoStack.length) return;
+    redoStack.push(serializeState());
+    restoreState(undoStack.pop());
+    renderTabs();
+    resetPreview('内容を戻しました。実行ボタンでプレビューを更新できます。');
+    saveTabs();
+  }
+
+  function redo() {
+    flushPendingEditHistory();
+    if (!redoStack.length) return;
+    undoStack.push(serializeState());
+    restoreState(redoStack.pop());
+    renderTabs();
+    resetPreview('内容をやり直しました。実行ボタンでプレビューを更新できます。');
+    saveTabs();
+  }
+
+  function stringToBase64Url(value) {
+    const binary = encodeURIComponent(value).replace(/%([0-9A-F]{2})/g, (_, hex) => (
+      String.fromCharCode(Number.parseInt(hex, 16))
+    ));
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  }
+
+  function base64UrlToString(value) {
+    const normalized = value.replace(/ /g, '+').replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized + '='.repeat((4 - normalized.length % 4) % 4);
+    const binary = atob(padded);
+    const encoded = Array.from(binary, (character) => (
+      `%${character.charCodeAt(0).toString(16).padStart(2, '0')}`
+    )).join('');
+    return decodeURIComponent(encoded);
+  }
+
+  function cleanShareParameter() {
+    const cleanUrl = new URL(location.href);
+    cleanUrl.searchParams.delete('data');
+    const relativeUrl = `${cleanUrl.pathname}${cleanUrl.search}${cleanUrl.hash}`;
+    history.replaceState({}, document.title, relativeUrl);
+  }
+
+  function loadTabs() {
+    let localTabs = makeDefaultTabs();
+    let localMode = 'local';
+    let saved = null;
+
+    try {
+      saved = localStorage.getItem(STORAGE_KEY);
+    } catch (error) {
+      console.error('Failed to access localStorage:', error);
+      startupError = 'ブラウザの保存領域へアクセスできません。この画面を開いている間だけ編集できます。';
+    }
+
+    if (saved) {
+      try {
+        localTabs = validateTabsData(JSON.parse(saved));
+      } catch (error) {
+        console.error('Failed to load tabs from localStorage:', error);
+        corruptSavedData = saved;
+        localMode = 'recovery';
+      }
+    }
+
+    localWorkspaceSnapshot = {
+      tabs: cloneTabs(localTabs),
+      current: 0,
+      mode: localMode,
+      corruptSavedData
+    };
+
+    tabs = cloneTabs(localTabs);
+    current = 0;
+    workspaceMode = localMode;
+
+    const urlParams = new URLSearchParams(location.search);
+    if (!urlParams.has('data')) return;
+
+    try {
+      const sharedTabs = validateTabsData(JSON.parse(base64UrlToString(urlParams.get('data'))));
+      tabs = sharedTabs;
+      current = 0;
+      workspaceMode = 'shared';
+    } catch (error) {
+      console.error('Failed to load tabs from URL:', error);
+      startupError = `共有URLを読み込めませんでした：${error.message}`;
+    } finally {
+      cleanShareParameter();
+    }
+  }
+
+  function acceptSharedWorkspace() {
+    if (!saveCurrentTabData()) return;
+    if (!confirm('現在ブラウザに保存されているタブを、表示中の共有データで置き換えますか？ 元のデータはバックアップキーへ退避されます。')) return;
+    if (!persistCandidate(tabs, { destructive: true, reason: 'accept-shared-workspace' })) return;
+
+    workspaceMode = 'local';
+    localWorkspaceSnapshot = { tabs: cloneTabs(), current, mode: 'local', corruptSavedData: null };
+    corruptSavedData = null;
+    hideSystemNotice();
+    showSaveNotice('共有データを保存しました。元のデータはバックアップへ退避されています。');
+  }
+
+  function discardSharedWorkspace() {
+    if (!localWorkspaceSnapshot) return;
+    if (!confirm('表示中の共有データを閉じて、元の作業へ戻りますか？ 共有データに加えた未保存の変更は失われます。')) return;
+    tabs = cloneTabs(localWorkspaceSnapshot.tabs);
+    current = localWorkspaceSnapshot.current;
+    workspaceMode = localWorkspaceSnapshot.mode;
+    corruptSavedData = localWorkspaceSnapshot.corruptSavedData;
+    undoStack = [];
+    redoStack = [];
+    renderTabs();
+    resetPreview();
+    showWorkspaceNotice();
+  }
+
+  function downloadCorruptData() {
+    if (!corruptSavedData) return;
+    downloadTextFile(corruptSavedData, `miniCodeTabs-recovery-${new Date().toISOString().slice(0, 10)}.json`);
+    showSaveNotice('読み込めなかった元データをダウンロードしました。');
+  }
+
+  function resetCorruptData() {
+    if (!confirm('読み込めない保存データを退避し、現在表示している新しいタブで保存領域を初期化しますか？')) return;
+    if (!persistCandidate(tabs, { destructive: true, reason: 'reset-corrupt-storage' })) return;
+    workspaceMode = 'local';
+    corruptSavedData = null;
+    localWorkspaceSnapshot = { tabs: cloneTabs(), current, mode: 'local', corruptSavedData: null };
+    hideSystemNotice();
+    showSaveNotice('保存データを初期化しました。元データはバックアップキーへ退避されています。');
+  }
+
+  function showWorkspaceNotice() {
+    if (workspaceMode === 'shared') {
+      showSystemNotice({
+        title: '共有データを一時表示しています',
+        message: 'コードは自動実行も自動保存もされていません。内容を確認してから、実行または保存してください。',
+        tone: 'info',
+        primary: { label: 'この内容を保存', onClick: acceptSharedWorkspace },
+        secondary: { label: '元の作業に戻る', onClick: discardSharedWorkspace }
+      });
+      return;
+    }
+
+    if (workspaceMode === 'recovery') {
+      showSystemNotice({
+        title: '以前の保存データを読み込めませんでした',
+        message: '元データは上書きしていません。先にダウンロードしてから初期化できます。',
+        tone: 'warning',
+        primary: { label: '元データをダウンロード', onClick: downloadCorruptData },
+        secondary: { label: '初期化して開始', onClick: resetCorruptData }
+      });
+      return;
+    }
+
+    if (startupError) {
+      showSystemNotice({
+        title: '共有URLの読み込みに失敗しました',
+        message: startupError,
+        tone: 'error',
+        secondary: { label: '閉じる', onClick: () => { startupError = ''; hideSystemNotice(); } }
+      });
+      return;
+    }
+
+    hideSystemNotice();
+  }
+
+  function buildSidebar() {
+    const button = (id, icon, label, ariaLabel = label) => `
+      <button type="button" class="sidebar-btn" id="${id}" aria-label="${ariaLabel}" title="${ariaLabel}">
+        <span class="sidebar-icon" aria-hidden="true">${icon}</span>
+        <span class="sidebar-label">${label}</span>
+      </button>`;
+
+    sidebarEl.innerHTML = [
+      button('exportBtn', '⇩', 'Export', 'JSONでエクスポート'),
+      button('importBtn', '⇧', 'Import', 'JSONからインポート'),
+      '<input class="sidebar-file-input" type="file" id="importFile" accept="application/json,.json" tabindex="-1">',
+      button('shareBtn', '🔗', 'Share', '現在のタブの共有URLを生成'),
+      button('undoBtn', '↶', 'Undo', '元に戻す'),
+      button('redoBtn', '↷', 'Redo', 'やり直す'),
+      button('cheatBtn', '？', 'Help', 'ショートカット一覧を表示'),
+      button('clearBtn', '✖', 'Clear', '現在のタブの内容をすべて消去')
+    ].join('');
+  }
+
   function handleSidebarToggle() {
     sidebarOpen = !sidebarOpen;
     sidebarEl.classList.toggle('closed', !sidebarOpen);
     sidebarToggleBtnEl.textContent = sidebarOpen ? '×' : '≡';
     sidebarToggleBtnEl.setAttribute('aria-label', sidebarOpen ? 'サイドバーを閉じる' : 'サイドバーを開く');
-  }
-
-  // --- タブ処理 ---
-  function loadTabs() {
-    const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.has('data')) {
-      try {
-        const json = fromBase64Url(urlParams.get('data'));
-        const arr = JSON.parse(json);
-        tabs = validateTabsData(arr);
-        current = 0;
-        history.replaceState({}, document.title, location.pathname);
-        return;
-      } catch (e) {
-        console.error("Failed to load tabs from URL:", e);
-      }
-    }
-
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      try {
-        const data = JSON.parse(saved);
-        tabs = validateTabsData(data);
-        current = Math.min(current, tabs.length - 1);
-        return;
-      } catch (e) {
-        console.error("Failed to load tabs from localStorage:", e);
-      }
-    }
-    tabs = [{name: 'タブ1', html: '', css: '', js: '', note: '', lastExec: null, execCount: 0}];
-    current = 0;
-  }
-
-  function saveTabs() {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(tabs));
-      return true;
-    } catch (error) {
-      console.error('Failed to save tabs to localStorage:', error);
-      if (saveNoticeEl) showSaveNotice('保存容量を超えたため保存できませんでした');
-      return false;
-    }
+    sidebarToggleBtnEl.setAttribute('aria-expanded', String(sidebarOpen));
   }
 
   function renderTabs() {
-    tabButtonsEl.innerHTML = tabs.map((t, i) =>
-      `<button class="tab-btn${i === current ? ' active' : ''}" 
-               onclick="window.miniCodeApp.switchTab(${i})" 
-               ondblclick="window.miniCodeApp.editTabName(${i})" 
-               title="ダブルクリックで名前変更">
-        <span>${escapeHtml(t.name)}</span>
-        ${tabs.length > 1 ? `<span class="close" onclick="event.stopPropagation(); window.miniCodeApp.removeTab(${i});">×</span>` : ''}
-      </button>`
-    ).join('') +
-    `<button class="add-btn" onclick="window.miniCodeApp.addTab()">＋追加</button>`;
+    tabButtonsEl.innerHTML = tabs.map((tab, index) => `
+      <div class="tab-item${index === current ? ' active' : ''}">
+        <button type="button" class="tab-btn" id="tab-${index}" role="tab"
+          aria-selected="${index === current}" aria-controls="editorArea"
+          tabindex="${index === current ? '0' : '-1'}" data-index="${index}"
+          title="ダブルクリックまたはF2で名前を変更">
+          <span class="tab-name">${escapeHtml(tab.name)}</span>
+        </button>
+        ${tabs.length > 1 ? `<button type="button" class="tab-close" data-index="${index}" aria-label="${escapeHtml(tab.name)}を削除">×</button>` : ''}
+      </div>`).join('') +
+      '<button type="button" class="add-btn" id="addTabBtn">＋追加</button>';
+
+    tabButtonsEl.querySelectorAll('.tab-btn').forEach((button) => {
+      const index = Number(button.dataset.index);
+      button.addEventListener('click', () => switchTab(index));
+      button.addEventListener('dblclick', () => editTabName(index));
+      button.addEventListener('keydown', (event) => handleTabKeydown(event, index));
+    });
+    tabButtonsEl.querySelectorAll('.tab-close').forEach((button) => {
+      button.addEventListener('click', () => removeTab(Number(button.dataset.index)));
+    });
+    document.getElementById('addTabBtn').addEventListener('click', addTab);
+    editorAreaEl.setAttribute('aria-labelledby', `tab-${current}`);
     renderEditor();
   }
 
-  function switchTab(i) {
-    if (i === current && tabs[i]) return;
+  function handleTabKeydown(event, index) {
+    if (event.key === 'F2') {
+      event.preventDefault();
+      editTabName(index);
+      return;
+    }
+
+    const last = tabs.length - 1;
+    let target = null;
+    if (event.key === 'ArrowRight') target = index === last ? 0 : index + 1;
+    if (event.key === 'ArrowLeft') target = index === 0 ? last : index - 1;
+    if (event.key === 'Home') target = 0;
+    if (event.key === 'End') target = last;
+    if (target !== null) {
+      event.preventDefault();
+      switchTab(target, true);
+    }
+  }
+
+  function switchTab(index, focusTab = false) {
+    if (!tabs[index] || index === current) return;
+    flushPendingEditHistory();
     saveCurrentTabData();
-    current = i;
+    if (workspaceMode === 'local') persistCandidate(tabs);
+    current = index;
     renderTabs();
-    runCode();
+    resetPreview('タブを切り替えました。実行ボタンでプレビューできます。');
+    showExecInfo();
+    if (focusTab) document.getElementById(`tab-${current}`)?.focus();
   }
 
   function addTab() {
+    flushPendingEditHistory();
     saveCurrentTabData();
     if (tabs.length >= MAX_TABS) {
-      showSaveNotice(`タブは最大${MAX_TABS}件です`);
+      showSaveNotice(`タブは最大${MAX_TABS}件です。`, 'warning');
       return;
     }
     pushUndo();
-    tabs.push({name: `タブ${tabs.length + 1}`, html: '', css: '', js: '', note: '', lastExec: null, execCount: 0});
+    tabs.push({ name: `タブ${tabs.length + 1}`, html: '', css: '', js: '', note: '', lastExec: null, execCount: 0 });
     current = tabs.length - 1;
     renderTabs();
+    resetPreview();
     saveTabs();
-    runCode();
+    document.getElementById(`tab-${current}`)?.focus();
   }
 
-  function removeTab(idx) {
-    if (tabs.length === 1) return;
+  function removeTab(index) {
+    if (tabs.length === 1 || !tabs[index]) return;
+    flushPendingEditHistory();
     saveCurrentTabData();
     pushUndo();
-    const wasCurrent = idx === current;
-    tabs.splice(idx, 1);
-    if (idx < current) {
-      current--;
-    } else if (current >= tabs.length) {
-      current = tabs.length - 1;
-    }
+    tabs.splice(index, 1);
+    if (index < current) current -= 1;
+    if (current >= tabs.length) current = tabs.length - 1;
     renderTabs();
+    resetPreview('タブを削除しました。Undoで元に戻せます。');
     saveTabs();
-    if (wasCurrent) {
-      runCode();
-    }
+    document.getElementById(`tab-${current}`)?.focus();
   }
 
-  function editTabName(idx) {
-    const tabBtnElements = tabButtonsEl.querySelectorAll('.tab-btn');
-    if (!tabBtnElements[idx]) return;
-
-    const btn = tabBtnElements[idx];
-    const span = btn.querySelector('span:first-child');
-    if (!span) return;
-
-    const oldName = tabs[idx].name;
+  function editTabName(index) {
+    const tabButton = document.getElementById(`tab-${index}`);
+    if (!tabButton || !tabs[index]) return;
+    const oldName = tabs[index].name;
     const input = document.createElement('input');
+    input.className = 'tab-name-input';
     input.type = 'text';
     input.maxLength = MAX_TAB_NAME_LENGTH;
     input.value = oldName;
+    input.setAttribute('aria-label', 'タブ名');
 
-    input.addEventListener('blur', () => {
-      let newName = input.value.trim();
-      if (newName === "") {
-        newName = oldName;
-      }
-      if (newName !== oldName) {
+    let cancelled = false;
+    const finish = () => {
+      const newName = cancelled ? oldName : input.value.trim();
+      if (newName && newName !== oldName) {
+        flushPendingEditHistory();
         saveCurrentTabData();
         pushUndo();
-        tabs[idx].name = newName;
+        tabs[index].name = newName;
+        saveTabs();
       }
       renderTabs();
-      saveTabs();
-    });
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') input.blur();
-      else if (e.key === 'Escape') {
-        input.value = oldName;
+      document.getElementById(`tab-${index}`)?.focus();
+    };
+
+    input.addEventListener('blur', finish, { once: true });
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') input.blur();
+      if (event.key === 'Escape') {
+        cancelled = true;
         input.blur();
       }
     });
 
-    span.replaceWith(input);
+    tabButton.replaceWith(input);
     input.focus();
     input.select();
   }
 
-  // --- Undo/Redo機能 ---
-  function pushUndo(serializedState = JSON.stringify(tabs)) {
-    if (lockStack) return;
-    const data = serializedState;
-    if (undoStack.length > 0 && undoStack[undoStack.length - 1] === data) return;
-
-    undoStack.push(data);
-    if (undoStack.length > MAX_UNDO_STACK) undoStack.shift();
-    redoStack = [];
-  }
-
-  function undo() {
-    if (!undoStack.length) return;
-    redoStack.push(JSON.stringify(tabs));
-    const lastState = undoStack.pop();
-    tabs = JSON.parse(lastState);
-    current = Math.min(current, tabs.length - 1);
-    renderTabs();
-    runCode({ recordExecution: false });
-    saveTabs();
-  }
-
-  function redo() {
-    if (!redoStack.length) return;
-    undoStack.push(JSON.stringify(tabs));
-    const nextState = redoStack.pop();
-    tabs = JSON.parse(nextState);
-    current = Math.min(current, tabs.length - 1);
-    renderTabs();
-    runCode({ recordExecution: false });
-    saveTabs();
-  }
-
-  // --- エディタ ---
   function renderEditor() {
-    if (!tabs[current]) {
-        if (tabs.length > 0) {
-            current = 0;
-        } else {
-            editorAreaEl.innerHTML = "<p>エラー: 表示できるタブがありません。</p>";
-            noteTextareaEl.value = "";
-            return;
-        }
-    }
-    const t = tabs[current];
-    editorAreaEl.innerHTML = `
-      <label>HTML（1枚HTMLコピペ可）<button class="view-code-btn" data-target="html" title="HTMLコードを表示" style="margin-left: 5px; cursor: pointer; border: none; background: none; color: white; font-size: 1.1em;">👀</button><br>
-        <textarea id="html" placeholder="HTMLや丸ごと1枚のHTMLコードも貼れます">${escapeHtml(t.html)}</textarea>
-      </label>
-      <label>CSS<button class="view-code-btn" data-target="css" title="CSSコードを表示" style="margin-left: 5px; cursor: pointer; border: none; background: none; color: white; font-size: 1.1em;">👀</button><br>
-        <textarea id="css">${escapeHtml(t.css)}</textarea>
-      </label>
-      <label>JavaScript<button class="view-code-btn" data-target="js" title="JavaScriptコードを表示" style="margin-left: 5px; cursor: pointer; border: none; background: none; color: white; font-size: 1.1em;">👀</button><br>
-        <textarea id="js">${escapeHtml(t.js)}</textarea>
-      </label>
-    `;
-    noteTextareaEl.value = t.note || "";
+    const tab = tabs[current];
+    if (!tab) return;
+    const field = (id, label, placeholder = '') => `
+      <div class="code-field">
+        <div class="code-field-header">
+          <label for="${id}">${label}</label>
+          <button type="button" class="view-code-btn" data-target="${id}" aria-label="${label}コードだけをプレビューに表示">コード表示</button>
+        </div>
+        <textarea id="${id}" maxlength="${MAX_TAB_CONTENT_LENGTH}" placeholder="${placeholder}" spellcheck="false">${escapeHtml(tab[id])}</textarea>
+      </div>`;
 
-    ['html', 'css', 'js'].forEach(id => {
+    editorAreaEl.innerHTML = [
+      field('html', 'HTML（1枚HTMLも貼り付け可能）', 'HTMLを入力'),
+      field('css', 'CSS', 'CSSを入力'),
+      field('js', 'JavaScript', 'JavaScriptを入力')
+    ].join('');
+    noteTextareaEl.value = tab.note || '';
+
+    ['html', 'css', 'js'].forEach((id) => {
       const textarea = document.getElementById(id);
-      if (textarea) {
-        textarea.addEventListener('keydown', handleEditorKeyDown);
-        textarea.addEventListener('input', handleEditorInput);
-      }
+      textarea.addEventListener('keydown', handleEditorKeyDown);
+      textarea.addEventListener('input', handleEditorInput);
     });
-
-    // Add event listeners for the new "View Code" buttons
-    editorAreaEl.querySelectorAll('.view-code-btn').forEach(btn => {
-      btn.addEventListener('click', function() {
-        viewCodeInPreview(this.dataset.target);
-      });
+    editorAreaEl.querySelectorAll('.view-code-btn').forEach((button) => {
+      button.addEventListener('click', () => viewCodeInPreview(button.dataset.target));
     });
-  }
-
-  function handleEditorKeyDown(e) {
-    if (e.ctrlKey || e.metaKey) {
-      switch (e.key.toLowerCase()) {
-        case 'enter':
-          runCode();
-          e.preventDefault();
-          break;
-        case 's':
-          saveCurrentTabData();
-          saveTabs();
-          showSaveNotice('保存しました（Ctrl+S）');
-          e.preventDefault();
-          break;
-        case 'z':
-          if (e.shiftKey) { redo(); } else { undo(); }
-          e.preventDefault();
-          break;
-        case 'y':
-          redo();
-          e.preventDefault();
-          break;
-      }
-    }
-  }
-
-  function handleEditorInput() {
-    if (!tabs[current]) return;
-    const previousState = JSON.stringify(tabs);
-    tabs[current].html = document.getElementById('html')?.value || '';
-    tabs[current].css = document.getElementById('css')?.value || '';
-    tabs[current].js = document.getElementById('js')?.value || '';
-    pushUndo(previousState);
-  }
-
-  function saveCurrentTabData() {
-    if (!tabs[current]) return;
-    tabs[current].html = document.getElementById('html')?.value || '';
-    tabs[current].css = document.getElementById('css')?.value || '';
-    tabs[current].js = document.getElementById('js')?.value || '';
-    tabs[current].note = noteTextareaEl.value || '';
-  }
-
-  // --- View Code in Preview Function ---
-  function viewCodeInPreview(type) {
-    if (!tabs[current]) return;
-    let codeToView = '';
-    if (type === 'html') {
-      codeToView = document.getElementById('html')?.value || '';
-    } else if (type === 'css') {
-      codeToView = document.getElementById('css')?.value || '';
-    } else if (type === 'js') {
-      codeToView = document.getElementById('js')?.value || '';
-    }
-
-    const escapedCode = escapeHtml(codeToView);
-    const codeViewStyles = `
-      body { margin: 0; background-color: #282c34; color: #abb2bf; font-family: 'Fira Mono', monospace; font-size: 14px; line-height: 1.5; }
-      pre { margin: 0; padding: 1em; white-space: pre-wrap; word-wrap: break-word; }
-    `;
-    
-    resultIframeEl.srcdoc = `
-      <html>
-        <head><style>${codeViewStyles}</style></head>
-        <body><pre><code>${escapedCode}</code></pre></body>
-      </html>
-    `;
-    if (returnToPreviewBtnEl) {
-      returnToPreviewBtnEl.style.display = 'inline-block';
-    }
-  }
-
-  // --- コード実行 ---
-  function runCode({ recordExecution = true } = {}) {
-    if (returnToPreviewBtnEl) { // Hide return button when running normal code
-        returnToPreviewBtnEl.style.display = 'none';
-    }
-    saveCurrentTabData();
-    saveTabs();
-
-    if (!tabs[current]) {
-        resetPreview();
-        return;
-    }
-    const t = tabs[current];
-    const htmlInput = t.html.trim();
-    let code;
-    let nightModeStyles = '';
-
-    if (previewNight) {
-      nightModeStyles = `
-        <style>
-          html,body{background:#141922!important;color:#e2e7f2!important;}
-          a{color:#84aaff!important;}
-          button,input[type="button"],input[type="submit"],select,textarea,.btn{background:#223760!important;color:#d4e2ff!important;border-color:#4664aa!important;}
-          h1,h2,h3,h4,h5,h6{color:#fff!important;}
-          table{background:#1a202a!important;color:#e2e7f2!important;}
-          th,td{border-color:#364263!important;}
-          ::selection{background:#364263!important;}
-        </style>
-      `;
-    }
-
-    if (/^\s*<!?doctype html.*<html[\s\S]*?>/i.test(htmlInput)) {
-      code = htmlInput;
-      if (nightModeStyles) {
-          if (/<head[^>]*>/i.test(code)) {
-              code = code.replace(/<head[^>]*>/i, `$&${nightModeStyles}`);
-          } else if (/<html[^>]*>/i.test(code)) {
-              code = code.replace(/<html[^>]*>/i, `$&<head>${nightModeStyles}</head>`);
-          } else {
-              code = `<head>${nightModeStyles}</head>${code}`;
-          }
-      }
-    } else {
-      code = `
-        <html>
-        <head>
-          ${nightModeStyles}
-          <style>${t.css}</style>
-        </head>
-        <body>
-          ${t.html}
-          <script>${t.js}<\/script>
-        </body>
-        </html>
-      `;
-    }
-    resultIframeEl.srcdoc = code;
-    if (recordExecution) {
-      t.lastExec = new Date().toISOString();
-      t.execCount = (t.execCount || 0) + 1;
-    }
     showExecInfo();
   }
 
-  function showExecInfo() {
-    if (!tabs[current]) {
-        execInfoEl.innerHTML = `(Ctrl+Enterで実行／Ctrl+Sで保存)`;
-        return;
+  function readEditorValues() {
+    return {
+      html: document.getElementById('html')?.value || '',
+      css: document.getElementById('css')?.value || '',
+      js: document.getElementById('js')?.value || '',
+      note: noteTextareaEl.value || ''
+    };
+  }
+
+  function saveCurrentTabData() {
+    if (!tabs[current]) return false;
+    const values = readEditorValues();
+    const candidate = cloneTabs();
+    Object.assign(candidate[current], values);
+    try {
+      validateTabsData(candidate);
+      Object.assign(tabs[current], values);
+      return true;
+    } catch (error) {
+      showSaveNotice(error.message, 'error', 0);
+      return false;
     }
-    const t = tabs[current];
-    const dateStr = formatDate(t.lastExec);
-    execInfoEl.innerHTML =
-      `(Ctrl+Enterで実行／Ctrl+Sで保存)　|　最終実行：${dateStr}　|　回数：${t.execCount || 0}`;
   }
 
-  function showSaveNotice(msg) {
-    saveNoticeEl.textContent = msg;
-    setTimeout(() => { saveNoticeEl.textContent = ''; }, 1700);
-  }
+  function applyEditorInput() {
+    const previousState = serializeState();
+    const previousTabs = cloneTabs();
+    Object.assign(tabs[current], readEditorValues());
 
-  function resetPreview() {
-    resultIframeEl.srcdoc = '<html><body style="background:#222;color:#888;text-align:center;padding:2em;font-family:sans-serif;"><span style="font-size:1.3em;">（プレビューなし）</span></body></html>';
-    execInfoEl.innerHTML = `(Ctrl+Enterで実行／Ctrl+Sで保存)`;
-  }
-
-  // --- クリア ---
-  function clearAllTabData() {
-    if (!confirm("現在のタブの内容をすべてクリアしますか？ (HTML/CSS/JS/メモ)")) return;
-    pushUndo();
-    if (tabs[current]) {
-      tabs[current].html = '';
-      tabs[current].css = '';
-      tabs[current].js = '';
-      tabs[current].note = '';
-      tabs[current].lastExec = null;
-      tabs[current].execCount = 0;
+    if (getTotalContentLength() > MAX_TOTAL_CONTENT_LENGTH) {
+      tabs = previousTabs;
       renderEditor();
-      resetPreview();
-      saveTabs();
-    }
-  }
-
-  // --- 分割線・スナップ ---
-  function setupDivider() {
-    const minW = 220, maxW = 900;
-    const storedWidth = parseInt(localStorage.getItem(WIDTH_KEY));
-    if (!isNaN(storedWidth)) {
-      editorColEl.style.width = `${Math.min(maxW, Math.max(minW, storedWidth))}px`;
-    }
-
-    dividerEl.addEventListener('mousedown', function(e) {
-      if (window.innerWidth < 900) return;
-      isDragging = true;
-      dividerEl.classList.add('active');
-      dragStartX = e.clientX;
-      dragStartWidth = editorColEl.offsetWidth;
-      document.body.style.userSelect = "none";
-      document.body.style.cursor = "ew-resize";
-    });
-
-    document.addEventListener('mousemove', function(e) {
-      if (!isDragging) return;
-      let delta = e.clientX - dragStartX;
-      let newW = Math.min(maxW, Math.max(minW, dragStartWidth + delta));
-      editorColEl.style.width = newW + 'px';
-    });
-
-    document.addEventListener('mouseup', function() {
-      if (!isDragging) return;
-      isDragging = false;
-      dividerEl.classList.remove('active');
-      localStorage.setItem(WIDTH_KEY, editorColEl.offsetWidth);
-      document.body.style.userSelect = "";
-      document.body.style.cursor = "";
-    });
-
-    dividerEl.addEventListener('dblclick', function(e) {
-      if (window.innerWidth < 900) return;
-      const mainAreaRect = dividerEl.parentElement.getBoundingClientRect();
-      let clickXInMainArea = e.clientX - mainAreaRect.left;
-      let newW = Math.min(maxW, Math.max(minW, clickXInMainArea));
-      editorColEl.style.width = newW + 'px';
-      localStorage.setItem(WIDTH_KEY, newW);
-    });
-
-    dividerEl.querySelectorAll('.snap-btn').forEach(btn => {
-      btn.addEventListener('click', function() {
-        if (window.innerWidth < 900) return;
-        const mainAreaWidth = dividerEl.parentElement.offsetWidth;
-        let percent = parseFloat(this.dataset.snap);
-        let newW = Math.round(Math.max(minW, Math.min(maxW, mainAreaWidth * percent)));
-        editorColEl.style.width = newW + 'px';
-        localStorage.setItem(WIDTH_KEY, newW);
-      });
-    });
-  }
-
-  // --- チートシート ---
-  const handleCheatModalKeydown = (e) => {
-    if (e.key === 'Escape') {
-      hideCheatModal();
-    }
-  };
-
-  function showCheatModal() {
-    cheatModalEl.style.display = 'flex';
-    document.addEventListener('keydown', handleCheatModalKeydown); 
-  }
-  function hideCheatModal() {
-    cheatModalEl.style.display = 'none';
-    document.removeEventListener('keydown', handleCheatModalKeydown); 
-  }
-
-  // --- プレビュー全画面 ---
-  function setupFullscreen() {
-    fullscreenBtnEl.addEventListener('click', () => {
-      if (fullscreenMode) return;
-      resultIframeEl.classList.add('fullscreen-iframe');
-      fullscreenCloseBtnEl.classList.add('show');
-      document.body.classList.add('fullscreen-mode');
-      fullscreenMode = true;
-    });
-
-    fullscreenCloseBtnEl.addEventListener('click', () => {
-      if (!fullscreenMode) return;
-      resultIframeEl.classList.remove('fullscreen-iframe');
-      fullscreenCloseBtnEl.classList.remove('show');
-      document.body.classList.remove('fullscreen-mode');
-      fullscreenMode = false;
-    });
-  }
-
-  // --- プレビュー ナイトモード ---
-  function setupNightBtn() {
-    function updateNightButtonState() {
-      nightBtnEl.classList.toggle('active', previewNight);
-      nightBtnEl.textContent = previewNight ? '🌚' : '🌝';
-      nightBtnEl.title = previewNight ? "ナイトモード中／解除" : "プレビューナイトモード";
-      nightBtnEl.setAttribute('aria-label', previewNight ? "プレビューナイトモードを解除" : "プレビューナイトモードを有効化");
-    }
-
-    nightBtnEl.addEventListener('click', () => {
-      previewNight = !previewNight;
-      localStorage.setItem(PREVIEW_NIGHT_KEY, previewNight ? '1' : '0');
-      updateNightButtonState();
-      runCode();
-    });
-    updateNightButtonState();
-  }
-
-  // --- JSONエクスポート ---
-  function exportTabs() {
-    saveCurrentTabData();
-    const blob = new Blob([JSON.stringify(tabs, null, 2)], {type: "application/json"});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "miniCodeTabs.json";
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }
-
-  // --- JSONインポート ---
-  function importTabs(e) {
-    const file = e.target.files[0];
-    if (!file) return;
-    if (file.size > MAX_IMPORT_FILE_SIZE) {
-      alert('インポート失敗：ファイルサイズは2MB以下にしてください。');
-      e.target.value = null;
+      showSaveNotice(`全体で${MAX_TOTAL_CONTENT_LENGTH}文字までです。直前の入力を戻しました。`, 'error', 0);
       return;
     }
+
+    beginEditHistory(previousState);
+    scheduleAutosave();
+  }
+
+  function handleEditorInput() {
+    applyEditorInput();
+  }
+
+  function handleNoteInput() {
+    applyEditorInput();
+  }
+
+  function handleEditorKeyDown(event) {
+    if (!(event.ctrlKey || event.metaKey)) return;
+    const key = event.key.toLowerCase();
+    if (key === 'enter') {
+      event.preventDefault();
+      runCode();
+    } else if (key === 's') {
+      event.preventDefault();
+      flushPendingEditHistory();
+      saveTabs({ notify: true });
+    } else if (key === 'z') {
+      event.preventDefault();
+      event.shiftKey ? redo() : undo();
+    } else if (key === 'y') {
+      event.preventDefault();
+      redo();
+    }
+  }
+
+  function escapeClosingTag(content, tagName) {
+    return content.replace(new RegExp(`</${tagName}`, 'gi'), `<\\/${tagName}`);
+  }
+
+  function injectIntoDocument(code, target, markup) {
+    if (!markup) return code;
+    const closingPattern = new RegExp(`</${target}\\s*>`, 'i');
+    if (closingPattern.test(code)) return code.replace(closingPattern, `${markup}</${target}>`);
+    const openingPattern = new RegExp(`<${target}[^>]*>`, 'i');
+    if (openingPattern.test(code)) return code.replace(openingPattern, (match) => `${match}${markup}`);
+    if (target === 'head') return code.replace(/<html[^>]*>/i, (match) => `${match}<head>${markup}</head>`);
+    const withBodyMarkup = code.replace(/<\/html\s*>/i, `${markup}</html>`);
+    return withBodyMarkup === code ? `${code}${markup}` : withBodyMarkup;
+  }
+
+  function buildPreviewDocument(tab) {
+    const nightCss = previewNight ? `
+      html,body{background:#141922!important;color:#e2e7f2!important;}
+      a{color:#84aaff!important;}
+      button,input,select,textarea,.btn{background:#223760!important;color:#d4e2ff!important;border-color:#4664aa!important;}
+      h1,h2,h3,h4,h5,h6{color:#fff!important;}
+      table{background:#1a202a!important;color:#e2e7f2!important;}
+      th,td{border-color:#364263!important;}` : '';
+    const combinedCss = [nightCss, tab.css].filter(Boolean).join('\n');
+    const styleBlock = combinedCss
+      ? `<style data-mini-code-style>${escapeClosingTag(combinedCss, 'style')}</style>`
+      : '';
+    const scriptBlock = tab.js
+      ? `<script data-mini-code-script>${escapeClosingTag(tab.js, 'script')}<\/script>`
+      : '';
+    const htmlInput = tab.html.trim();
+
+    if (/^\s*(?:<!doctype[^>]*>\s*)?<html(?:\s|>)/i.test(htmlInput)) {
+      let code = htmlInput;
+      code = injectIntoDocument(code, 'head', styleBlock);
+      code = injectIntoDocument(code, 'body', scriptBlock);
+      return code;
+    }
+
+    return `<!doctype html>
+      <html>
+        <head>${styleBlock}</head>
+        <body>${tab.html}${scriptBlock}</body>
+      </html>`;
+  }
+
+  function runCode({ recordExecution = true, persist = true } = {}) {
+    if (!saveCurrentTabData() || !tabs[current]) return;
+    returnToPreviewBtnEl.hidden = true;
+    resultIframeEl.srcdoc = buildPreviewDocument(tabs[current]);
+    previewMode = 'execution';
+
+    if (recordExecution) {
+      tabs[current].lastExec = new Date().toISOString();
+      tabs[current].execCount = Math.min(Number.MAX_SAFE_INTEGER, (tabs[current].execCount || 0) + 1);
+    }
+    showExecInfo();
+    if (persist && workspaceMode === 'local') persistCandidate(tabs);
+  }
+
+  function showExecInfo() {
+    const tab = tabs[current];
+    if (!tab) {
+      execInfoEl.textContent = 'Ctrl+Enterで実行／Ctrl+Sで保存';
+      return;
+    }
+    execInfoEl.textContent = `Ctrl+Enterで実行／Ctrl+Sで保存｜最終実行：${formatDate(tab.lastExec)}｜回数：${tab.execCount || 0}`;
+  }
+
+  function resetPreview(message = 'コードは自動実行されません。内容を確認して「コードを実行」を押してください。') {
+    resultIframeEl.srcdoc = `<!doctype html><html lang="ja"><body style="margin:0;padding:2em;background:#f5f7fa;color:#4a5565;font-family:system-ui,sans-serif;text-align:center;"><p>${escapeHtml(message)}</p></body></html>`;
+    previewMode = 'empty';
+    returnToPreviewBtnEl.hidden = true;
+  }
+
+  function stopPreview() {
+    resetPreview('プレビューを停止しました。');
+    showSaveNotice('プレビューを停止しました。');
+  }
+
+  function viewCodeInPreview(type) {
+    if (!saveCurrentTabData() || !tabs[current]) return;
+    const label = { html: 'HTML', css: 'CSS', js: 'JavaScript' }[type] || 'コード';
+    const escapedCode = escapeHtml(tabs[current][type] || '');
+    resultIframeEl.srcdoc = `<!doctype html><html lang="ja"><head><style>
+      body{margin:0;background:#282c34;color:#d7dae0;font:14px/1.55 ui-monospace,monospace;}
+      header{padding:.65em 1em;background:#20232a;color:#9fb5ff;font-family:system-ui,sans-serif;font-weight:700;}
+      pre{margin:0;padding:1em;white-space:pre-wrap;overflow-wrap:anywhere;}
+    </style></head><body><header>${label}</header><pre><code>${escapedCode}</code></pre></body></html>`;
+    previewMode = 'code';
+    returnToPreviewBtnEl.hidden = false;
+  }
+
+  function clearAllTabData() {
+    if (!confirm('現在のタブの内容をすべてクリアしますか？ HTML・CSS・JavaScript・メモが対象です。')) return;
+    flushPendingEditHistory();
+    saveCurrentTabData();
+    pushUndo();
+    Object.assign(tabs[current], { html: '', css: '', js: '', note: '', lastExec: null, execCount: 0 });
+    renderEditor();
+    resetPreview('現在のタブをクリアしました。Undoで元に戻せます。');
+    saveTabs();
+  }
+
+  function exportTabs() {
+    if (!saveCurrentTabData()) return;
+    downloadTextFile(JSON.stringify(tabs, null, 2), 'miniCodeTabs.json');
+    showSaveNotice('JSONをエクスポートしました。');
+  }
+
+  function importTabs(event) {
+    const input = event.target;
+    const file = input.files?.[0];
+    if (!file) return;
+    if (file.size > MAX_IMPORT_FILE_SIZE) {
+      showSaveNotice('インポートできません：ファイルサイズは2MB以下にしてください。', 'error', 0);
+      input.value = '';
+      return;
+    }
+
     const reader = new FileReader();
-    reader.onload = function(ev) {
+    reader.onload = () => {
       try {
-        const importedData = JSON.parse(ev.target.result);
-        const validatedTabs = validateTabsData(importedData);
+        const importedTabs = validateTabsData(JSON.parse(reader.result));
+        if (!confirm(`${importedTabs.length}件のタブをインポートし、現在の保存データと置き換えますか？ 元のデータはバックアップへ退避されます。`)) return;
+        if (!persistCandidate(importedTabs, { destructive: true, reason: 'import-json' })) return;
+
+        flushPendingEditHistory();
         pushUndo();
-        tabs = validatedTabs;
+        tabs = importedTabs;
         current = 0;
+        workspaceMode = 'local';
+        corruptSavedData = null;
+        localWorkspaceSnapshot = { tabs: cloneTabs(), current: 0, mode: 'local', corruptSavedData: null };
         renderTabs();
-        runCode();
-        saveTabs();
-        alert("タブデータをインポートしました！");
-      } catch (err) {
-        alert(`インポート失敗：JSONの解析中にエラーが発生しました。
-${err.message}`);
-        console.error("Import error:", err);
+        resetPreview('インポートしました。コードはまだ実行されていません。');
+        hideSystemNotice();
+        showSaveNotice('タブデータをインポートしました。');
+      } catch (error) {
+        console.error('Import error:', error);
+        showSaveNotice(`インポートできません：${error.message}`, 'error', 0);
       } finally {
-        e.target.value = null;
+        input.value = '';
       }
+    };
+    reader.onerror = () => {
+      showSaveNotice('インポートできません：ファイルを読み込めませんでした。', 'error', 0);
+      input.value = '';
     };
     reader.readAsText(file);
   }
 
-  // --- 共有用URL ---
-  function shareTabs() {
-    saveCurrentTabData();
+  function shareCurrentTab() {
+    if (!saveCurrentTabData() || !tabs[current]) return;
     try {
-      const dataToShare = tabs.length > 3 ? tabs.slice(0, 3) : tabs;
-      const jsonString = JSON.stringify(dataToShare);
-      const base64Param = toBase64Url(jsonString);
       const shareUrl = new URL(location.href);
-        shareUrl.search = '';
-        shareUrl.hash = '';
-        shareUrl.searchParams.set('data', base64Param);
-        prompt("このURLをコピーして共有できます！（内容が長すぎる場合は先頭3タブ分まで）", shareUrl.toString());
-    } catch (err) {
-      alert("共有URLの生成に失敗しました。データが大きすぎる可能性があります。");
-      console.error("Share URL generation error:", err);
+      shareUrl.search = '';
+      shareUrl.hash = '';
+      shareUrl.searchParams.set('data', stringToBase64Url(JSON.stringify([tabs[current]])));
+      if (shareUrl.toString().length > MAX_SHARE_URL_LENGTH) {
+        throw new Error(`共有URLが${MAX_SHARE_URL_LENGTH}文字を超えます。JSON Exportを利用してください。`);
+      }
+      prompt(`現在の「${tabs[current].name}」だけを共有できます。受け取った側では自動実行・自動保存されません。`, shareUrl.toString());
+    } catch (error) {
+      console.error('Share URL generation error:', error);
+      showSaveNotice(`共有URLを生成できません：${error.message}`, 'error', 0);
     }
   }
-  
-  // --- Event Listener Setup ---
-  function setupEventListeners() {
-    sidebarToggleBtnEl.addEventListener('click', handleSidebarToggle);
-    runBtnEl.addEventListener('click', runCode);
-    noteTextareaEl.addEventListener('input', () => {
-        const previousState = JSON.stringify(tabs);
-        saveCurrentTabData();
-        pushUndo(previousState);
-    });
 
-    if (returnToPreviewBtnEl) { // Add listener for the new button
-        returnToPreviewBtnEl.addEventListener('click', runCode);
+  function setEditorWidth(width) {
+    const nextWidth = Math.min(900, Math.max(220, Math.round(width)));
+    editorColEl.style.width = `${nextWidth}px`;
+    dividerEl.setAttribute('aria-valuenow', String(nextWidth));
+    return nextWidth;
+  }
+
+  function saveEditorWidth(width) {
+    try {
+      localStorage.setItem(WIDTH_KEY, String(width));
+    } catch (error) {
+      console.error('Failed to save editor width:', error);
+    }
+  }
+
+  function setupDivider() {
+    try {
+      const storedWidth = Number.parseInt(localStorage.getItem(WIDTH_KEY), 10);
+      if (Number.isFinite(storedWidth)) setEditorWidth(storedWidth);
+    } catch (error) {
+      console.error('Failed to load editor width:', error);
     }
 
+    dividerEl.addEventListener('pointerdown', (event) => {
+      if (innerWidth < 900 || event.target.closest('.snap-btn')) return;
+      isDragging = true;
+      dragStartX = event.clientX;
+      dragStartWidth = editorColEl.offsetWidth;
+      dividerEl.classList.add('active');
+      dividerEl.setPointerCapture?.(event.pointerId);
+      document.body.style.userSelect = 'none';
+      document.body.style.cursor = 'ew-resize';
+    });
+
+    dividerEl.addEventListener('pointermove', (event) => {
+      if (!isDragging) return;
+      setEditorWidth(dragStartWidth + event.clientX - dragStartX);
+    });
+
+    const finishDrag = () => {
+      if (!isDragging) return;
+      isDragging = false;
+      dividerEl.classList.remove('active');
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      saveEditorWidth(editorColEl.offsetWidth);
+    };
+    dividerEl.addEventListener('pointerup', finishDrag);
+    dividerEl.addEventListener('pointercancel', finishDrag);
+
+    dividerEl.addEventListener('dblclick', () => {
+      if (innerWidth < 900) return;
+      saveEditorWidth(setEditorWidth(dividerEl.parentElement.offsetWidth / 2));
+    });
+
+    dividerEl.addEventListener('keydown', (event) => {
+      if (innerWidth < 900) return;
+      let width = editorColEl.offsetWidth;
+      if (event.key === 'ArrowLeft') width -= event.shiftKey ? 50 : 10;
+      else if (event.key === 'ArrowRight') width += event.shiftKey ? 50 : 10;
+      else if (event.key === 'Home') width = 220;
+      else if (event.key === 'End') width = 900;
+      else return;
+      event.preventDefault();
+      saveEditorWidth(setEditorWidth(width));
+    });
+
+    dividerEl.querySelectorAll('.snap-btn').forEach((button) => {
+      button.addEventListener('click', () => {
+        if (innerWidth < 900) return;
+        const width = dividerEl.parentElement.offsetWidth * Number.parseFloat(button.dataset.snap);
+        saveEditorWidth(setEditorWidth(width));
+      });
+    });
+  }
+
+  function updateNightButtonState() {
+    nightBtnEl.classList.toggle('active', previewNight);
+    nightBtnEl.textContent = previewNight ? '🌚' : '🌝';
+    nightBtnEl.setAttribute('aria-pressed', String(previewNight));
+    nightBtnEl.setAttribute('aria-label', previewNight ? 'プレビューナイトモードを解除' : 'プレビューナイトモードを有効化');
+  }
+
+  function setupNightMode() {
+    try {
+      previewNight = localStorage.getItem(PREVIEW_NIGHT_KEY) === '1';
+    } catch (error) {
+      console.error('Failed to load night mode:', error);
+    }
+    updateNightButtonState();
+
+    nightBtnEl.addEventListener('click', () => {
+      previewNight = !previewNight;
+      updateNightButtonState();
+      try {
+        localStorage.setItem(PREVIEW_NIGHT_KEY, previewNight ? '1' : '0');
+      } catch (error) {
+        showSaveNotice('ナイトモード設定を保存できませんでした。', 'warning');
+      }
+      if (previewMode === 'execution') runCode({ recordExecution: false, persist: false });
+    });
+  }
+
+  function enterFullscreen() {
+    if (fullscreenMode) return;
+    fullscreenReturnFocus = document.activeElement;
+    resultIframeEl.classList.add('fullscreen-iframe');
+    fullscreenCloseBtnEl.hidden = false;
+    fullscreenMode = true;
+    fullscreenCloseBtnEl.focus();
+  }
+
+  function exitFullscreen() {
+    if (!fullscreenMode) return;
+    resultIframeEl.classList.remove('fullscreen-iframe');
+    fullscreenCloseBtnEl.hidden = true;
+    fullscreenMode = false;
+    fullscreenReturnFocus?.focus();
+  }
+
+  function getFocusableElements(container) {
+    return [...container.querySelectorAll('button:not([hidden]), [href], input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')]
+      .filter((element) => !element.hidden);
+  }
+
+  function handleModalKeydown(event) {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      hideCheatModal();
+      return;
+    }
+    if (event.key !== 'Tab') return;
+    const focusable = getFocusableElements(cheatModalEl);
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable.at(-1);
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
+  function showCheatModal() {
+    modalReturnFocus = document.activeElement;
+    cheatModalEl.hidden = false;
+    cheatModalEl.addEventListener('keydown', handleModalKeydown);
+    cheatModalCloseBtnEl.focus();
+  }
+
+  function hideCheatModal() {
+    cheatModalEl.hidden = true;
+    cheatModalEl.removeEventListener('keydown', handleModalKeydown);
+    modalReturnFocus?.focus();
+  }
+
+  function setupEventListeners() {
+    sidebarToggleBtnEl.addEventListener('click', handleSidebarToggle);
+    runBtnEl.addEventListener('click', () => runCode());
+    stopPreviewBtnEl.addEventListener('click', stopPreview);
+    returnToPreviewBtnEl.addEventListener('click', () => runCode({ recordExecution: false }));
+    noteTextareaEl.addEventListener('input', handleNoteInput);
+    noteTextareaEl.addEventListener('keydown', handleEditorKeyDown);
+
     document.getElementById('exportBtn').addEventListener('click', exportTabs);
+    document.getElementById('importBtn').addEventListener('click', () => document.getElementById('importFile').click());
     document.getElementById('importFile').addEventListener('change', importTabs);
-    document.getElementById('shareBtn').addEventListener('click', shareTabs);
+    document.getElementById('shareBtn').addEventListener('click', shareCurrentTab);
     document.getElementById('undoBtn').addEventListener('click', undo);
     document.getElementById('redoBtn').addEventListener('click', redo);
     document.getElementById('cheatBtn').addEventListener('click', showCheatModal);
     document.getElementById('clearBtn').addEventListener('click', clearAllTabData);
 
+    fullscreenBtnEl.addEventListener('click', enterFullscreen);
+    fullscreenCloseBtnEl.addEventListener('click', exitFullscreen);
     cheatModalCloseBtnEl.addEventListener('click', hideCheatModal);
-    cheatModalEl.addEventListener('click', (e) => {
-      if (e.target === cheatModalEl) hideCheatModal();
+    cheatModalEl.addEventListener('click', (event) => {
+      if (event.target === cheatModalEl) hideCheatModal();
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && fullscreenMode) exitFullscreen();
     });
   }
 
-  // --- Initialization ---
   function init() {
     cacheDOMElements();
     buildSidebar();
-    setupEventListeners(); 
-    
+    setupEventListeners();
     loadTabs();
-    renderTabs(); 
-    runCode();
-
+    renderTabs();
+    resetPreview();
     setupDivider();
-    setupFullscreen();
-    setupNightBtn();
+    setupNightMode();
     showExecInfo();
-
+    showWorkspaceNotice();
     sidebarEl.classList.toggle('closed', !sidebarOpen);
-    sidebarToggleBtnEl.textContent = sidebarOpen ? '×' : '≡';
-    sidebarToggleBtnEl.setAttribute('aria-label', sidebarOpen ? 'サイドバーを閉じる' : 'サイドバーを開く');
+    sidebarToggleBtnEl.setAttribute('aria-expanded', String(sidebarOpen));
   }
-
-  window.miniCodeApp = {
-    switchTab,
-    addTab,
-    removeTab,
-    editTabName,
-    viewCodeInPreview // Exposing the new function
-  };
 
   window.addEventListener('DOMContentLoaded', init);
   window.addEventListener('beforeunload', () => {
-      saveCurrentTabData();
-      saveTabs();
+    flushPendingEditHistory();
+    clearTimeout(autosaveTimer);
+    if (workspaceMode === 'local' && saveCurrentTabData()) {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(validateTabsData(tabs)));
+      } catch (error) {
+        console.error('Failed to save before unload:', error);
+      }
+    }
   });
-
-})(); // IIFE End
+})();

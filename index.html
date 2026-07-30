@@ -2,74 +2,101 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>Webミニ実行機 v2.3 (Refactored + Enhancements)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="HTML・CSS・JavaScriptをブラウザ内で入力し、安全なプレビュー領域で動作確認できる旧Webミニ実行機です。">
+  <meta name="theme-color" content="#20242b">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Webミニ実行機 v2.3">
+  <meta property="og:description" content="HTML・CSS・JavaScriptをブラウザ内で入力して動作確認できます。">
+  <title>Webミニ実行機 v2.3｜HTML・CSS・JavaScriptをブラウザで確認</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div class="header">
-    <button class="sidebar-toggle" id="sidebarToggleBtn" title="サイドバーを開閉" aria-label="サイドバーを開閉">≡</button>
-    <span class="header-title">Webミニ実行機 v2.3</span>
-  </div>
+  <header class="header">
+    <button type="button" class="sidebar-toggle" id="sidebarToggleBtn" title="サイドバーを開閉" aria-label="サイドバーを開閉" aria-controls="sidebar" aria-expanded="true">×</button>
+    <h1 class="header-title">Webミニ実行機 <span class="version">v2.3</span></h1>
+  </header>
+
   <div class="app-wrapper">
-    <div class="sidebar" id="sidebar">
-      <!-- サイドバー内ボタン群はJSで挿入 -->
-    </div>
-    <div class="main-col">
-      <div class="tabs" id="tabButtons"></div>
+    <nav class="sidebar" id="sidebar" aria-label="ファイルと編集の操作">
+      <!-- サイドバー内ボタン群はJavaScriptで挿入 -->
+    </nav>
+
+    <main class="main-col">
+      <div class="tabs" id="tabButtons" role="tablist" aria-label="コードタブ"></div>
+
+      <section id="systemNotice" class="system-notice" aria-live="polite" hidden>
+        <div class="system-notice-copy">
+          <strong id="systemNoticeTitle"></strong>
+          <p id="systemNoticeText"></p>
+        </div>
+        <div class="system-notice-actions">
+          <button type="button" id="systemNoticePrimary" class="notice-primary" hidden></button>
+          <button type="button" id="systemNoticeSecondary" class="notice-secondary" hidden></button>
+        </div>
+      </section>
+
       <div class="main-area">
-        <div class="editor-col" id="editorCol">
-          <div class="editor" id="editorArea"></div>
-          <span id="execInfo">(Ctrl+Enterで実行／Ctrl+Sで保存)</span>
+        <section class="editor-col" id="editorCol" aria-label="コード入力">
+          <div class="editor" id="editorArea" role="tabpanel" aria-label="選択中のタブのコード"></div>
+
+          <p id="execInfo" class="exec-info">Ctrl+Enterで実行／Ctrl+Sで保存</p>
+
           <div class="note-area">
-            <label class="note">メモ<br>
-              <textarea id="note"></textarea>
-            </label>
+            <label class="note" for="note">メモ</label>
+            <textarea id="note" maxlength="500000" aria-describedby="inputLimitHelp"></textarea>
           </div>
-          <button class="run-btn" id="runBtn">実行</button>
-          <div id="saveNotice"></div>
-        </div>
-        <div class="divider" id="divider" title="ドラッグまたはダブルクリックで幅調整">
-          <div class="snap-btns">
-            <button class="snap-btn" data-snap="0.25" aria-label="幅を25%にスナップ"><span>●</span><span class="percent-label">25%</span></button>
-            <button class="snap-btn" data-snap="0.5"  aria-label="幅を50%にスナップ"><span>●</span><span class="percent-label">50%</span></button>
-            <button class="snap-btn" data-snap="0.75" aria-label="幅を75%にスナップ"><span>●</span><span class="percent-label">75%</span></button>
+
+          <p id="inputLimitHelp" class="input-help">各入力欄は50万文字、全体で150万文字まで保存できます。</p>
+          <button type="button" class="run-btn" id="runBtn">コードを実行</button>
+          <div id="saveNotice" class="save-notice" role="status" aria-live="polite"></div>
+        </section>
+
+        <div class="divider" id="divider" role="separator" aria-label="エディタとプレビューの幅" aria-orientation="vertical" aria-valuemin="220" aria-valuemax="900" aria-valuenow="460" tabindex="0" title="ドラッグ、矢印キー、またはダブルクリックで幅調整">
+          <div class="snap-btns" role="group" aria-label="エディタ幅のプリセット">
+            <button type="button" class="snap-btn" data-snap="0.25" aria-label="幅を25%にする"><span aria-hidden="true">●</span><span class="percent-label">25%</span></button>
+            <button type="button" class="snap-btn" data-snap="0.5" aria-label="幅を50%にする"><span aria-hidden="true">●</span><span class="percent-label">50%</span></button>
+            <button type="button" class="snap-btn" data-snap="0.75" aria-label="幅を75%にする"><span aria-hidden="true">●</span><span class="percent-label">75%</span></button>
           </div>
         </div>
-        <div class="preview-col">
-          <div class="preview-label">▼ プレビュー
-            <button class="night-btn" id="nightBtn" title="プレビューナイトモード" aria-label="プレビューナイトモード切り替え">🌚</button>
-            <button class="fullscreen-btn" id="fullscreenBtn" title="全画面プレビュー" aria-label="全画面プレビュー">⛶</button>
+
+        <section class="preview-col" aria-labelledby="previewHeading">
+          <div class="preview-label">
+            <h2 id="previewHeading">プレビュー</h2>
+            <div class="preview-actions">
+              <button type="button" class="stop-btn" id="stopPreviewBtn" title="プレビューを停止" aria-label="プレビューを停止">停止</button>
+              <button type="button" class="night-btn" id="nightBtn" title="プレビューナイトモード" aria-label="プレビューナイトモード切り替え">🌝</button>
+              <button type="button" class="fullscreen-btn" id="fullscreenBtn" title="全画面プレビュー" aria-label="全画面プレビュー">⛶</button>
+            </div>
           </div>
-          <button id="returnToPreviewBtn" style="display:none; margin-left: 10px; padding: 0.2em 0.8em;">Return to Execution Preview</button>
-          <!-- --- MODIFIED: Added sandbox attribute to iframe --- -->
-          <iframe id="result" sandbox="allow-scripts allow-forms allow-modals allow-popups allow-presentation"></iframe>
-        </div>
+          <button type="button" id="returnToPreviewBtn" class="return-preview-btn" hidden>実行プレビューに戻る</button>
+          <iframe id="result" title="コード実行プレビュー" sandbox="allow-scripts"></iframe>
+        </section>
       </div>
-    </div>
+    </main>
   </div>
-  <div id="cheatModal" class="cheat-modal" style="display:none;">
+
+  <div id="cheatModal" class="cheat-modal" role="dialog" aria-modal="true" aria-labelledby="cheatModalTitle" hidden>
     <div class="cheat-modal-content">
-      <button class="cheat-modal-close" id="cheatModalCloseBtn" aria-label="ショートカット一覧を閉じる">×</button>
-      <h3>ショートカット一覧・使い方</h3>
+      <button type="button" class="cheat-modal-close" id="cheatModalCloseBtn" aria-label="ショートカット一覧を閉じる">×</button>
+      <h2 id="cheatModalTitle">ショートカット一覧・使い方</h2>
       <ul>
         <li><b>Ctrl+Enter</b>：コードを実行</li>
         <li><b>Ctrl+S</b>：内容を保存</li>
-        <li><b>Ctrl+Z/Y/A</b>：元に戻す/やり直し/全選択</li>
-        <li><b>タブのダブルクリック</b>：タブ名を編集</li>
-        <li><b>分割線ドラッグ</b>：エディタとプレビューの幅を調整</li>
-        <li><b>分割線ダブルクリック</b>：その位置に幅をスナップ</li>
-        <li><b>25%/50%/75%ボタン</b>：即スナップ</li>
-        <li><b>クリアボタン</b>：コード欄とプレビューをすべてリセット</li>
-        <li><b>プレビューナイトボタン</b>：結果表示もダーク/ナイト化</li>
-        <li><b>全画面</b>：プレビュー最大化/解除</li>
-        <li><b>Export/Import</b>：タブ構成・内容をJSON保存／復元</li>
-        <li><b>Share</b>：今の内容を共有URL化（短文向け）</li>
-        <li><b>ESCキー</b>：ヘルプ（この画面）を閉じる (←New!)</li>
+        <li><b>Ctrl+Z / Ctrl+Y</b>：元に戻す／やり直し</li>
+        <li><b>F2</b>またはタブのダブルクリック：タブ名を編集</li>
+        <li><b>左右矢印キー</b>：タブを移動</li>
+        <li><b>分割線ドラッグ／矢印キー</b>：エディタとプレビューの幅を調整</li>
+        <li><b>25% / 50% / 75%</b>：エディタ幅を切り替え</li>
+        <li><b>Clear</b>：現在のタブのコードとメモを消去</li>
+        <li><b>Export / Import</b>：タブ構成・内容をJSON保存／復元</li>
+        <li><b>Share</b>：現在のタブだけを共有URLにする</li>
+        <li><b>Esc</b>：この画面または全画面プレビューを閉じる</li>
       </ul>
     </div>
   </div>
-  <button class="fullscreen-close-btn" id="fullscreenCloseBtn" style="display:none;" aria-label="全画面プレビューを閉じる">×</button>
-<script src="script.js"></script>
+
+  <button type="button" class="fullscreen-close-btn" id="fullscreenCloseBtn" hidden aria-label="全画面プレビューを閉じる">×</button>
+  <script src="script.js"></script>
 </body>
 </html>
