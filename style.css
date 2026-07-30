@@ -7,6 +7,12 @@ html, body {
   overflow-y: hidden;
   box-sizing: border-box;
 }
+*, *::before, *::after {
+  box-sizing: inherit;
+}
+[hidden] {
+  display: none !important;
+}
 body {
   background: #23272d;
   color: #fff;
@@ -90,6 +96,10 @@ body {
   background: #232946; color: #fff; font-size: 0.93em; border-radius: 7px; padding: 0.3em 0.8em;
   box-shadow: 0 2px 10px #0019; white-space: nowrap; z-index: 100;
 }
+.sidebar-btn .sidebar-tooltip {
+  margin: 0;
+  font-size: 0.93em;
+}
 .sidebar-btn:hover .sidebar-tooltip, .sidebar-btn:focus .sidebar-tooltip {
   display: block;
 }
@@ -99,17 +109,62 @@ body {
   gap: 0.2em;
   min-height: 46px;
 }
+.tab-item {
+  display: flex;
+  align-items: stretch;
+  margin-right: 4px;
+  margin-bottom: 4px;
+  max-width: 190px;
+}
 .tab-btn {
-  background: #444; color: #fff; border: none; padding: 0.26em 1.15em 0.24em 0.95em;
-  margin-right: 4px; margin-bottom: 4px; border-radius: 9px 9px 0 0; cursor: pointer;
+  background: #444; color: #fff; border: none; padding: 0.26em 0.7em 0.24em 0.95em;
+  border-radius: 9px 0 0 0; cursor: pointer;
   font-size: 1em; min-width: 66px; max-width: 164px; position: relative;
   transition: 0.1s; display: flex; align-items: center;
+  overflow: hidden;
 }
 .tab-btn.active { background: #fff; color: #23272d; font-weight: bold; z-index: 2; }
-.tab-btn .close {
-  color: #d00; font-size: 1.23em; margin-left: 0.22em; background: transparent;
-  border: none; cursor: pointer; line-height: 1; position: relative; right: -2px;
-  padding: 0 0.12em; align-self: center; display: inline-block;
+.tab-btn:focus-visible,
+.tab-close:focus-visible,
+.add-btn:focus-visible,
+.sidebar-btn:focus-visible,
+.run-btn:focus-visible,
+.night-btn:focus-visible,
+.fullscreen-btn:focus-visible,
+.return-preview-btn:focus-visible {
+  outline: 3px solid #8db2ff;
+  outline-offset: 2px;
+}
+.tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tab-close {
+  width: 30px;
+  border: none;
+  border-radius: 0 9px 0 0;
+  background: #444;
+  color: #ffb3b3;
+  cursor: pointer;
+  font-size: 1.15em;
+}
+.tab-item.active .tab-close {
+  background: #fff;
+  color: #b40000;
+}
+.tab-close:hover, .tab-close:focus-visible {
+  background: #7d2424;
+  color: #fff;
+}
+.tab-name-input {
+  width: 150px;
+  min-width: 80px;
+  margin: 0;
+  padding: 0.26em 0.55em;
+  border: 2px solid #6c8cff;
+  border-radius: 8px 8px 0 0;
+  font: inherit;
 }
 .add-btn {
   background: #2979ff; color: #fff; border: none; padding: 0.36em 1.1em;
@@ -177,6 +232,31 @@ body {
   flex-direction: column;
   min-height: 0;
   height: 100%;
+}
+.editor-field {
+  margin-top: 0.5em;
+}
+.editor-field-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6em;
+  margin-bottom: 0.25em;
+}
+.editor-field-header label {
+  margin-top: 0;
+}
+.view-code-btn {
+  flex: 0 0 auto;
+  border: 1px solid #4c566f;
+  border-radius: 6px;
+  background: #252b35;
+  color: #dbe7ff;
+  cursor: pointer;
+  padding: 0.2em 0.55em;
+}
+.view-code-btn:hover, .view-code-btn:focus-visible {
+  background: #38465f;
 }
 /* spacerで実行ボタンに余白を */
 .spacer {
@@ -271,6 +351,16 @@ textarea {
   margin-left: 0.3em;
 }
 .fullscreen-btn:hover, .night-btn:hover { background: #2230b5; opacity: 1; }
+.return-preview-btn {
+  align-self: flex-start;
+  margin: 0 0 0.55em 0;
+  padding: 0.35em 0.75em;
+  border: 1px solid #5977b9;
+  border-radius: 6px;
+  background: #293653;
+  color: #e8efff;
+  cursor: pointer;
+}
 .night-btn.active { background: #121b31; color: #c9ecff; }
 .fullscreen-iframe {
   position: fixed !important; top: 0; left: 0; width: 100vw !important; height: 100vh !important;
@@ -317,16 +407,92 @@ iframe {
 }
 
 #execInfo { color:#ccc;font-size:0.98em; margin-bottom: 0.2em; display: block;}
+#saveNotice {
+  min-height: 1.35em;
+  color: #b8d8ff;
+  text-align: center;
+  font-size: 0.92em;
+}
+#saveNotice.error {
+  color: #ffb2ae;
+}
 @media (max-width: 900px) {
-  .app-wrapper { flex-direction: column; height: auto; }
-  .sidebar { flex-direction: row; width: 100vw; height: 54px; border-right: none; border-bottom: 2px solid #222832; }
-  .main-col { min-width: 0; min-height: 0; height: auto; }
-  .main-area { flex-direction: column; height: auto; }
+  html, body {
+    width: 100%;
+    height: auto;
+    min-height: 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+  .header {
+    position: sticky;
+    top: 0;
+  }
+  .app-wrapper { flex-direction: column; height: auto; min-height: calc(100vh - 48px); overflow: visible; }
+  .sidebar {
+    flex-direction: row;
+    width: 100%;
+    height: auto;
+    min-height: 54px;
+    padding: 0.35em 0.5em;
+    border-right: none;
+    border-bottom: 2px solid #222832;
+    overflow-x: auto;
+    overflow-y: hidden;
+    justify-content: flex-start;
+  }
+  .sidebar.closed {
+    width: 100% !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    border-bottom: none !important;
+  }
+  .main-col { flex: 0 0 auto; min-width: 0; min-height: 0; height: auto; }
+  .main-area { flex: 0 0 auto; flex-direction: column; height: auto; }
   .divider { display: none; }
-  .editor-col, .preview-col { max-width: none; min-width: 0; width: 100%; height: auto; }
-  .preview-col { border-left: none; border-top: 1.5px solid #333; }
-  iframe { min-height: 140px; }
+  .editor-col, .preview-col { flex: 0 0 auto; max-width: none; min-width: 0; width: 100% !important; height: auto; }
+  .editor-col { overflow: hidden; padding: 0.9em 1em 0.7em; }
+  .editor {
+    flex: 0 0 auto;
+    height: auto;
+  }
+  .editor-field textarea {
+    min-height: 110px;
+  }
+  .preview-col { border-left: none; border-top: 1.5px solid #333; padding: 1em; min-height: 50vh; }
+  iframe { min-height: 42vh; height: 42vh; max-height: none; }
   .run-btn { width: 100%; align-self: stretch; margin-left: 0; }
+  .tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    align-items: flex-end;
+    padding-left: 0.7em;
+  }
+  .tab-item, .add-btn {
+    flex: 0 0 auto;
+  }
+}
+@media (max-width: 520px) {
+  .header {
+    padding-right: 0.5em;
+  }
+  .header-title {
+    margin-left: 0.35em;
+    font-size: 1em;
+  }
+  .editor-field-header {
+    align-items: flex-start;
+  }
+  textarea {
+    font-size: 16px;
+  }
+  .preview-label {
+    gap: 0.4em;
+    flex-wrap: wrap;
+  }
+  .fullscreen-btn, .night-btn {
+    padding: 0.35em 0.75em;
+  }
 }
 .tab-btn input { width: 62px; font-size: 1em; border-radius: 5px; border: none; padding: 0.05em; margin-right: 0.18em;}
 /* チートシートモーダル */
@@ -338,6 +504,77 @@ iframe {
 .cheat-modal-close { position: absolute; top: 15px; right: 18px; color: #d33; font-size: 1.37em; border: none; background: none; cursor: pointer; }
 .cheat-modal ul { margin-top: 0.5em; padding-left: 1.3em;}
 .cheat-modal li { margin-bottom: 0.7em; }
+.share-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 3100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1em;
+  background: rgba(10, 14, 22, 0.82);
+}
+.share-modal-content {
+  width: min(520px, 100%);
+  max-height: calc(100vh - 2em);
+  overflow-y: auto;
+  border: 1px solid #4d5d79;
+  border-radius: 14px;
+  background: #f7f9fc;
+  color: #192235;
+  padding: 1.5em;
+  box-shadow: 0 20px 70px #0008;
+}
+.share-modal-content h2 {
+  margin: 0.1em 0 0.55em;
+  font-size: 1.35em;
+}
+.share-modal-kicker {
+  margin: 0;
+  color: #345fc7;
+  font-size: 0.82em;
+  font-weight: bold;
+  letter-spacing: 0.08em;
+}
+.share-data-summary {
+  padding: 0.75em 0.9em;
+  border-left: 4px solid #5278d8;
+  background: #e9effd;
+  font-weight: bold;
+}
+.share-modal-actions {
+  display: flex;
+  gap: 0.7em;
+  margin-top: 1.2em;
+}
+.share-modal-actions button {
+  min-height: 44px;
+  padding: 0.65em 1em;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: bold;
+}
+.share-open-btn {
+  flex: 1 1 auto;
+  border: 1px solid #264ea9;
+  background: #315fc8;
+  color: #fff;
+}
+.share-cancel-btn {
+  border: 1px solid #8791a4;
+  background: #fff;
+  color: #263044;
+}
+.share-modal-note {
+  margin-bottom: 0;
+  color: #586174;
+  font-size: 0.87em;
+}
+@media (max-width: 520px) {
+  .share-modal-actions {
+    flex-direction: column;
+  }
+}
 body.fullscreen-mode .header {
   display: none !important;
 }
