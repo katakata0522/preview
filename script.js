@@ -850,31 +850,44 @@ function escapeHtml(str) {
       editorColEl.style.width = `${Math.min(maxW, Math.max(minW, storedWidth))}px`;
     }
 
-    dividerEl.addEventListener('mousedown', function(e) {
+    // マウス・タッチ・ペンを同じ処理で扱う（Pointer Events）。
+    // タッチ操作でページがスクロールしないようにする（見た目は変わらない）。
+    dividerEl.style.touchAction = 'none';
+    let activePointerId = null;
+
+    dividerEl.addEventListener('pointerdown', function(e) {
       if (window.innerWidth < 900) return;
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
       isDragging = true;
+      activePointerId = e.pointerId;
+      // プレビューのiframe上に指やマウスが移っても追従できるようにする。
+      try { dividerEl.setPointerCapture(e.pointerId); } catch (_) {}
       dividerEl.classList.add('active');
       dragStartX = e.clientX;
       dragStartWidth = editorColEl.offsetWidth;
       document.body.style.userSelect = "none";
       document.body.style.cursor = "ew-resize";
+      if (e.pointerType !== 'mouse') e.preventDefault();
     });
 
-    document.addEventListener('mousemove', function(e) {
-      if (!isDragging) return;
+    document.addEventListener('pointermove', function(e) {
+      if (!isDragging || e.pointerId !== activePointerId) return;
       let delta = e.clientX - dragStartX;
       let newW = Math.min(maxW, Math.max(minW, dragStartWidth + delta));
       editorColEl.style.width = newW + 'px';
     });
 
-    document.addEventListener('mouseup', function() {
-      if (!isDragging) return;
+    function endDividerDrag(e) {
+      if (!isDragging || e.pointerId !== activePointerId) return;
       isDragging = false;
+      activePointerId = null;
       dividerEl.classList.remove('active');
       setStorageItemSafe(WIDTH_KEY, editorColEl.offsetWidth);
       document.body.style.userSelect = "";
       document.body.style.cursor = "";
-    });
+    }
+    document.addEventListener('pointerup', endDividerDrag);
+    document.addEventListener('pointercancel', endDividerDrag);
 
     dividerEl.addEventListener('dblclick', function(e) {
       if (window.innerWidth < 900) return;
