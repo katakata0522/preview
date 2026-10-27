@@ -2,13 +2,13 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>Webミニ実行機 v2.3 (Refactored + Enhancements)</title>
+  <title>Webミニ実行機 v2.3</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <div class="header">
-    <button class="sidebar-toggle" id="sidebarToggleBtn" title="サイドバーを開閉" aria-label="サイドバーを開閉">≡</button>
+    <button type="button" class="sidebar-toggle" id="sidebarToggleBtn" title="サイドバーを開閉" aria-label="サイドバーを開閉" aria-controls="sidebar" aria-expanded="true">≡</button>
     <span class="header-title">Webミニ実行機 v2.3</span>
   </div>
   <div class="app-wrapper">
@@ -16,41 +16,54 @@
       <!-- サイドバー内ボタン群はJSで挿入 -->
     </div>
     <div class="main-col">
-      <div class="tabs" id="tabButtons"></div>
+      <div class="tabs" id="tabButtons" role="tablist" aria-label="コードのタブ"></div>
       <div class="main-area">
         <div class="editor-col" id="editorCol">
           <div class="editor" id="editorArea"></div>
           <span id="execInfo">(Ctrl+Enterで実行／Ctrl+Sで保存)</span>
           <div class="note-area">
             <label class="note">メモ<br>
-              <textarea id="note"></textarea>
+              <textarea id="note" maxlength="500000" aria-label="現在のタブのメモ"></textarea>
             </label>
           </div>
-          <button class="run-btn" id="runBtn">実行</button>
-          <div id="saveNotice"></div>
+          <button type="button" class="run-btn" id="runBtn">実行</button>
+          <div id="saveNotice" role="status" aria-live="polite"></div>
         </div>
         <div class="divider" id="divider" title="ドラッグまたはダブルクリックで幅調整">
           <div class="snap-btns">
-            <button class="snap-btn" data-snap="0.25" aria-label="幅を25%にスナップ"><span>●</span><span class="percent-label">25%</span></button>
-            <button class="snap-btn" data-snap="0.5"  aria-label="幅を50%にスナップ"><span>●</span><span class="percent-label">50%</span></button>
-            <button class="snap-btn" data-snap="0.75" aria-label="幅を75%にスナップ"><span>●</span><span class="percent-label">75%</span></button>
+            <button type="button" class="snap-btn" data-snap="0.25" aria-label="幅を25%にスナップ"><span>●</span><span class="percent-label">25%</span></button>
+            <button type="button" class="snap-btn" data-snap="0.5"  aria-label="幅を50%にスナップ"><span>●</span><span class="percent-label">50%</span></button>
+            <button type="button" class="snap-btn" data-snap="0.75" aria-label="幅を75%にスナップ"><span>●</span><span class="percent-label">75%</span></button>
           </div>
         </div>
         <div class="preview-col">
           <div class="preview-label">▼ プレビュー
-            <button class="night-btn" id="nightBtn" title="プレビューナイトモード" aria-label="プレビューナイトモード切り替え">🌚</button>
-            <button class="fullscreen-btn" id="fullscreenBtn" title="全画面プレビュー" aria-label="全画面プレビュー">⛶</button>
+            <button type="button" class="night-btn" id="nightBtn" title="プレビューナイトモード" aria-label="プレビューナイトモード切り替え">🌚</button>
+            <button type="button" class="fullscreen-btn" id="fullscreenBtn" title="全画面プレビュー" aria-label="全画面プレビュー">⛶</button>
           </div>
-          <!-- --- MODIFIED: Added sandbox attribute to iframe --- -->
-          <iframe id="result" sandbox="allow-scripts allow-forms allow-modals allow-popups allow-presentation"></iframe>
+          <button type="button" id="returnToPreviewBtn" class="return-preview-btn" hidden>実行プレビューに戻る</button>
+          <iframe id="result" title="コードの実行プレビュー" sandbox="allow-scripts allow-forms allow-modals allow-popups allow-presentation"></iframe>
         </div>
       </div>
     </div>
   </div>
-  <div id="cheatModal" class="cheat-modal" style="display:none;">
+  <div id="sharedDataModal" class="share-modal" hidden role="dialog" aria-modal="true" aria-labelledby="sharedDataTitle" aria-describedby="sharedDataDescription">
+    <div class="share-modal-content">
+      <p class="share-modal-kicker">共有リンク</p>
+      <h2 id="sharedDataTitle">共有データを受け取りました</h2>
+      <p id="sharedDataDescription">リンクを開いただけでは、保存中のデータを変更したりコードを実行したりしません。</p>
+      <p id="sharedDataSummary" class="share-data-summary"></p>
+      <div class="share-modal-actions">
+        <button type="button" class="share-open-btn" id="sharedDataOpenBtn">内容を確認する</button>
+        <button type="button" class="share-cancel-btn" id="sharedDataCancelBtn">今のデータを使う</button>
+      </div>
+      <p class="share-modal-note">「内容を確認する」を選んでも、実行または保存するまではブラウザの保存データを置き換えません。</p>
+    </div>
+  </div>
+  <div id="cheatModal" class="cheat-modal" hidden role="dialog" aria-modal="true" aria-labelledby="cheatModalTitle">
     <div class="cheat-modal-content">
-      <button class="cheat-modal-close" id="cheatModalCloseBtn" aria-label="ショートカット一覧を閉じる">×</button>
-      <h3>ショートカット一覧・使い方</h3>
+      <button type="button" class="cheat-modal-close" id="cheatModalCloseBtn" aria-label="ショートカット一覧を閉じる">×</button>
+      <h3 id="cheatModalTitle">ショートカット一覧・使い方</h3>
       <ul>
         <li><b>Ctrl+Enter</b>：コードを実行</li>
         <li><b>Ctrl+S</b>：内容を保存</li>
@@ -64,11 +77,11 @@
         <li><b>全画面</b>：プレビュー最大化/解除</li>
         <li><b>Export/Import</b>：タブ構成・内容をJSON保存／復元</li>
         <li><b>Share</b>：今の内容を共有URL化（短文向け）</li>
-        <li><b>ESCキー</b>：ヘルプ（この画面）を閉じる (←New!)</li>
+        <li><b>ESCキー</b>：ヘルプ（この画面）を閉じる</li>
       </ul>
     </div>
   </div>
-  <button class="fullscreen-close-btn" id="fullscreenCloseBtn" style="display:none;" aria-label="全画面プレビューを閉じる">×</button>
+  <button type="button" class="fullscreen-close-btn" id="fullscreenCloseBtn" aria-label="全画面プレビューを閉じる">×</button>
 <script src="script.js"></script>
 </body>
 </html>
