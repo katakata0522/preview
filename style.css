@@ -217,6 +217,11 @@ body {
   overflow: visible;
   position: relative;
 }
+/* 仕切りで幅を決めたとき（style属性にwidthがあるとき）だけ、その幅をそのまま使う。
+   何も保存されていない初期表示は今までと同じ（左右を均等に分ける）。 */
+.editor-col[style*="width"] {
+  flex: 0 0 auto;
+}
 .preview-col {
   background: #22252b;
   min-width: 220px;
