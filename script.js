@@ -534,7 +534,7 @@ function escapeHtml(str) {
     current = Math.min(current, tabs.length - 1);
     renderTabs();
     resetPreview();
-    saveTabs();
+    if (!sharedPreviewUncommitted) saveTabs();
   }
 
   function redo() {
@@ -547,7 +547,7 @@ function escapeHtml(str) {
     current = Math.min(current, tabs.length - 1);
     renderTabs();
     resetPreview();
-    saveTabs();
+    if (!sharedPreviewUncommitted) saveTabs();
   }
 
   // --- エディタ ---
@@ -712,10 +712,10 @@ function escapeHtml(str) {
     if (!content) return documentHtml;
     const closingTag = new RegExp(`</${tagName}\\s*>`, 'i');
     if (closingTag.test(documentHtml)) {
-      return documentHtml.replace(closingTag, `${content}\n$&`);
+      return documentHtml.replace(closingTag, match => `${content}\n${match}`);
     }
     if (/<\/html\s*>/i.test(documentHtml)) {
-      return documentHtml.replace(/<\/html\s*>/i, `${content}\n$&`);
+      return documentHtml.replace(/<\/html\s*>/i, match => `${content}\n${match}`);
     }
     return `${documentHtml}\n${content}`;
   }
@@ -762,9 +762,9 @@ function escapeHtml(str) {
       const headAdditions = `${nightModeStyles}${customStyle}`;
       if (headAdditions) {
         if (/<head[^>]*>/i.test(code)) {
-          code = code.replace(/<head[^>]*>/i, `$&${headAdditions}`);
+          code = code.replace(/<head[^>]*>/i, match => `${match}${headAdditions}`);
         } else if (/<html[^>]*>/i.test(code)) {
-          code = code.replace(/<html[^>]*>/i, `$&<head>${headAdditions}</head>`);
+          code = code.replace(/<html[^>]*>/i, match => `${match}<head>${headAdditions}</head>`);
         } else {
           code = `<head>${headAdditions}</head>${code}`;
         }
