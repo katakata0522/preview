@@ -5,19 +5,22 @@
   const BACKUP_STORAGE_KEY = 'miniCodeTabs_v2.3_backup';
   const WIDTH_KEY = 'miniCodeTabs_editorWidth_v2.3';
   const PREVIEW_NIGHT_KEY = 'miniCodeTabs_previewNight';
-  const MAX_UNDO_STACK = 100;
+  const MAX_UNDO_STACK = 50;
+  const MAX_UNDO_BYTES = 5 * 1024 * 1024;
   const MAX_TABS = 50;
   const MAX_TAB_NAME_LENGTH = 100;
   const MAX_TAB_CONTENT_LENGTH = 500000;
   const MAX_TOTAL_CONTENT_LENGTH = 1500000;
   const MAX_IMPORT_FILE_SIZE = 2 * 1024 * 1024;
-  const MAX_SHARE_URL_LENGTH = 8000;
+  const MAX_SHARE_URL_LENGTH = 12000;
+  const LOCAL_PREVIEW_SANDBOX = 'allow-scripts allow-forms allow-modals allow-popups allow-presentation';
   const EDIT_HISTORY_DELAY = 600;
   const AUTOSAVE_DELAY = 800;
 
   let tabs = [];
   let current = 0;
   let workspaceMode = 'local';
+  let pendingSharedTabs = null;
   let localWorkspaceSnapshot = null;
   let corruptSavedData = null;
   let startupError = '';
@@ -30,10 +33,12 @@
   let undoStack = [];
   let redoStack = [];
   let pendingEditSnapshot = null;
+  let pendingEditField = null;
   let editHistoryTimer = null;
   let autosaveTimer = null;
+  let pendingLocalEdits = false;
   let noticeTimer = null;
-  let isDragging = false;
+  let activePointerId = null;
   let dragStartX = 0;
   let dragStartWidth = 0;
 
@@ -60,6 +65,7 @@
   let systemNoticeTextEl;
   let systemNoticePrimaryEl;
   let systemNoticeSecondaryEl;
+  let sharedDataModalEl;
 
   function cacheDOMElements() {
     sidebarEl = document.getElementById('sidebar');
@@ -85,6 +91,7 @@
     systemNoticeTextEl = document.getElementById('systemNoticeText');
     systemNoticePrimaryEl = document.getElementById('systemNoticePrimary');
     systemNoticeSecondaryEl = document.getElementById('systemNoticeSecondary');
+    sharedDataModalEl = document.getElementById('sharedDataModal');
   }
 
   function makeDefaultTabs() {
@@ -241,6 +248,8 @@
       }
 
       localStorage.setItem(STORAGE_KEY, serialized);
+      pendingLocalEdits = false;
+      clearTimeout(autosaveTimer);
       return true;
     } catch (error) {
       console.error('Failed to persist tabs:', error);
@@ -251,7 +260,10 @@
 
   function saveTabs({ notify = false } = {}) {
     if (workspaceMode === 'shared') {
-      showSaveNotice('共有データはまだ保存されていません。上の「この内容を保存」を選んでください。', 'warning', 0);
+      return false;
+    }
+    if (workspaceMode === 'unavailable') {
+      if (notify) showSaveNotice('保存領域を読み取れません。Exportで編集内容を保存できます。', 'warning', 0);
       return false;
     }
     if (workspaceMode === 'recovery') {
@@ -260,6 +272,7 @@
     }
     if (!saveCurrentTabData()) return false;
 
+    pendingLocalEdits = true;
     const saved = persistCandidate(tabs);
     if (saved && notify) showSaveNotice('保存しました');
     return saved;
@@ -267,6 +280,7 @@
 
   function scheduleAutosave() {
     if (workspaceMode !== 'local') return;
+    pendingLocalEdits = true;
     clearTimeout(autosaveTimer);
     autosaveTimer = setTimeout(() => saveTabs(), AUTOSAVE_DELAY);
   }
@@ -281,15 +295,24 @@
     current = Math.max(0, Math.min(Number.isInteger(state.current) ? state.current : 0, tabs.length - 1));
   }
 
+  function appendHistory(stack, state) {
+    stack.push(state);
+    let size = stack.reduce((sum, item) => sum + item.length * 2, 0);
+    while (stack.length > 1 && (stack.length > MAX_UNDO_STACK || size > MAX_UNDO_BYTES)) {
+      size -= stack.shift().length * 2;
+    }
+  }
+
   function pushUndo(serializedState = serializeState()) {
     if (undoStack.at(-1) === serializedState) return;
-    undoStack.push(serializedState);
-    if (undoStack.length > MAX_UNDO_STACK) undoStack.shift();
+    appendHistory(undoStack, serializedState);
     redoStack = [];
   }
 
-  function beginEditHistory(previousState) {
-    if (pendingEditSnapshot === null) pendingEditSnapshot = previousState;
+  function beginEditHistory(field) {
+    if (pendingEditField !== field) flushPendingEditHistory();
+    if (pendingEditSnapshot === null) pendingEditSnapshot = serializeState();
+    pendingEditField = field;
     clearTimeout(editHistoryTimer);
     editHistoryTimer = setTimeout(flushPendingEditHistory, EDIT_HISTORY_DELAY);
   }
@@ -300,12 +323,21 @@
       pushUndo(pendingEditSnapshot);
       pendingEditSnapshot = null;
     }
+    pendingEditField = null;
+  }
+
+  function clearWorkspaceHistory() {
+    clearTimeout(editHistoryTimer);
+    pendingEditSnapshot = null;
+    pendingEditField = null;
+    undoStack = [];
+    redoStack = [];
   }
 
   function undo() {
     flushPendingEditHistory();
     if (!undoStack.length) return;
-    redoStack.push(serializeState());
+    appendHistory(redoStack, serializeState());
     restoreState(undoStack.pop());
     renderTabs();
     resetPreview('内容を戻しました。実行ボタンでプレビューを更新できます。');
@@ -315,7 +347,7 @@
   function redo() {
     flushPendingEditHistory();
     if (!redoStack.length) return;
-    undoStack.push(serializeState());
+    appendHistory(undoStack, serializeState());
     restoreState(redoStack.pop());
     renderTabs();
     resetPreview('内容をやり直しました。実行ボタンでプレビューを更新できます。');
@@ -342,6 +374,11 @@
   function cleanShareParameter() {
     const cleanUrl = new URL(location.href);
     cleanUrl.searchParams.delete('data');
+    const fragment = new URLSearchParams(cleanUrl.hash.slice(1));
+    if (fragment.has('data')) {
+      fragment.delete('data');
+      cleanUrl.hash = fragment.toString();
+    }
     const relativeUrl = `${cleanUrl.pathname}${cleanUrl.search}${cleanUrl.hash}`;
     history.replaceState({}, document.title, relativeUrl);
   }
@@ -355,10 +392,11 @@
       saved = localStorage.getItem(STORAGE_KEY);
     } catch (error) {
       console.error('Failed to access localStorage:', error);
+      localMode = 'unavailable';
       startupError = 'ブラウザの保存領域へアクセスできません。この画面を開いている間だけ編集できます。';
     }
 
-    if (saved) {
+    if (saved !== null) {
       try {
         localTabs = validateTabsData(JSON.parse(saved));
       } catch (error) {
@@ -368,31 +406,64 @@
       }
     }
 
-    localWorkspaceSnapshot = {
-      tabs: cloneTabs(localTabs),
-      current: 0,
-      mode: localMode,
-      corruptSavedData
-    };
-
-    tabs = cloneTabs(localTabs);
+    tabs = localTabs;
     current = 0;
     workspaceMode = localMode;
+  }
 
-    const urlParams = new URLSearchParams(location.search);
-    if (!urlParams.has('data')) return;
+  function receiveSharedLink() {
+    const fragment = new URLSearchParams(location.hash.slice(1));
+    const data = fragment.get('data') ?? new URLSearchParams(location.search).get('data');
+    if (data === null) return;
 
     try {
-      const sharedTabs = validateTabsData(JSON.parse(base64UrlToString(urlParams.get('data'))));
-      tabs = sharedTabs;
-      current = 0;
-      workspaceMode = 'shared';
+      if (data.length > MAX_SHARE_URL_LENGTH) throw new Error('共有データが大きすぎます。');
+      pendingSharedTabs = validateTabsData(JSON.parse(base64UrlToString(data)));
+      const names = pendingSharedTabs.slice(0, 3).map(tab => tab.name).join('、');
+      const remaining = pendingSharedTabs.length - 3;
+      document.getElementById('sharedDataSummary').textContent =
+        `全${pendingSharedTabs.length}タブ：${names}${remaining > 0 ? ` ほか${remaining}件` : ''}`;
+      if (!sharedDataModalEl.open) sharedDataModalEl.showModal();
     } catch (error) {
       console.error('Failed to load tabs from URL:', error);
+      pendingSharedTabs = null;
+      if (sharedDataModalEl.open) sharedDataModalEl.close();
       startupError = `共有URLを読み込めませんでした：${error.message}`;
+      showWorkspaceNotice();
+      if (workspaceMode !== 'local') showSaveNotice(startupError, 'error', 0);
     } finally {
       cleanShareParameter();
     }
+  }
+
+  function openSharedPreview() {
+    if (!pendingSharedTabs) return;
+    if (workspaceMode !== 'shared') {
+      if (!saveCurrentTabData() || (workspaceMode === 'local' && pendingLocalEdits && !persistCandidate(tabs))) {
+        cancelSharedPreview();
+        return;
+      }
+      localWorkspaceSnapshot = { tabs, current, mode: workspaceMode, corruptSavedData };
+    } else if (!confirm('表示中の共有タブを、新しく受け取った共有タブに切り替えますか？')) {
+      cancelSharedPreview();
+      return;
+    }
+    tabs = pendingSharedTabs;
+    pendingSharedTabs = null;
+    current = 0;
+    workspaceMode = 'shared';
+    clearWorkspaceHistory();
+    sharedDataModalEl.close();
+    renderTabs();
+    resetPreview();
+    showWorkspaceNotice();
+    document.getElementById('tab-0').focus();
+  }
+
+  function cancelSharedPreview() {
+    pendingSharedTabs = null;
+    sharedDataModalEl.close();
+    document.getElementById(`tab-${current}`).focus();
   }
 
   function acceptSharedWorkspace() {
@@ -401,7 +472,7 @@
     if (!persistCandidate(tabs, { destructive: true, reason: 'accept-shared-workspace' })) return;
 
     workspaceMode = 'local';
-    localWorkspaceSnapshot = { tabs: cloneTabs(), current, mode: 'local', corruptSavedData: null };
+    localWorkspaceSnapshot = null;
     corruptSavedData = null;
     hideSystemNotice();
     showSaveNotice('共有データを保存しました。元のデータはバックアップへ退避されています。');
@@ -410,19 +481,19 @@
   function discardSharedWorkspace() {
     if (!localWorkspaceSnapshot) return;
     if (!confirm('表示中の共有データを閉じて、元の作業へ戻りますか？ 共有データに加えた未保存の変更は失われます。')) return;
-    tabs = cloneTabs(localWorkspaceSnapshot.tabs);
+    tabs = localWorkspaceSnapshot.tabs;
     current = localWorkspaceSnapshot.current;
     workspaceMode = localWorkspaceSnapshot.mode;
     corruptSavedData = localWorkspaceSnapshot.corruptSavedData;
-    undoStack = [];
-    redoStack = [];
+    localWorkspaceSnapshot = null;
+    clearWorkspaceHistory();
     renderTabs();
     resetPreview();
     showWorkspaceNotice();
   }
 
   function downloadCorruptData() {
-    if (!corruptSavedData) return;
+    if (corruptSavedData === null) return;
     downloadTextFile(corruptSavedData, `miniCodeTabs-recovery-${new Date().toISOString().slice(0, 10)}.json`);
     showSaveNotice('読み込めなかった元データをダウンロードしました。');
   }
@@ -432,7 +503,7 @@
     if (!persistCandidate(tabs, { destructive: true, reason: 'reset-corrupt-storage' })) return;
     workspaceMode = 'local';
     corruptSavedData = null;
-    localWorkspaceSnapshot = { tabs: cloneTabs(), current, mode: 'local', corruptSavedData: null };
+    localWorkspaceSnapshot = null;
     hideSystemNotice();
     showSaveNotice('保存データを初期化しました。元データはバックアップキーへ退避されています。');
   }
@@ -462,7 +533,7 @@
 
     if (startupError) {
       showSystemNotice({
-        title: '共有URLの読み込みに失敗しました',
+        title: '読み込み時のお知らせ',
         message: startupError,
         tone: 'error',
         secondary: { label: '閉じる', onClick: () => { startupError = ''; hideSystemNotice(); } }
@@ -484,7 +555,7 @@
       button('exportBtn', '⇩', 'Export', 'JSONでエクスポート'),
       button('importBtn', '⇧', 'Import', 'JSONからインポート'),
       '<input class="sidebar-file-input" type="file" id="importFile" accept="application/json,.json" tabindex="-1">',
-      button('shareBtn', '🔗', 'Share', '現在のタブの共有URLを生成'),
+      button('shareBtn', '🔗', 'Share', '全タブのコードとメモを共有'),
       button('undoBtn', '↶', 'Undo', '元に戻す'),
       button('redoBtn', '↷', 'Redo', 'やり直す'),
       button('cheatBtn', '？', 'Help', 'ショートカット一覧を表示'),
@@ -550,7 +621,7 @@
     if (!tabs[index] || index === current) return;
     flushPendingEditHistory();
     saveCurrentTabData();
-    if (workspaceMode === 'local') persistCandidate(tabs);
+    if (workspaceMode === 'local' && pendingLocalEdits) persistCandidate(tabs);
     current = index;
     renderTabs();
     resetPreview('タブを切り替えました。実行ボタンでプレビューできます。');
@@ -636,7 +707,7 @@
           <label for="${id}">${label}</label>
           <button type="button" class="view-code-btn" data-target="${id}" aria-label="${label}コードだけをプレビューに表示">コード表示</button>
         </div>
-        <textarea id="${id}" maxlength="${MAX_TAB_CONTENT_LENGTH}" placeholder="${placeholder}" spellcheck="false">${escapeHtml(tab[id])}</textarea>
+        <textarea id="${id}" maxlength="${MAX_TAB_CONTENT_LENGTH}" placeholder="${placeholder}" spellcheck="false"></textarea>
       </div>`;
 
     editorAreaEl.innerHTML = [
@@ -648,6 +719,7 @@
 
     ['html', 'css', 'js'].forEach((id) => {
       const textarea = document.getElementById(id);
+      textarea.value = tab[id];
       textarea.addEventListener('keydown', handleEditorKeyDown);
       textarea.addEventListener('input', handleEditorInput);
     });
@@ -669,6 +741,10 @@
   function saveCurrentTabData() {
     if (!tabs[current]) return false;
     const values = readEditorValues();
+    for (const key of Object.keys(values)) {
+      const stored = tabs[current][key];
+      if (stored.includes('\r') && stored.replace(/\r\n?/g, '\n') === values[key]) values[key] = stored;
+    }
     const candidate = cloneTabs();
     Object.assign(candidate[current], values);
     try {
@@ -681,28 +757,19 @@
     }
   }
 
-  function applyEditorInput() {
-    const previousState = serializeState();
-    const previousTabs = cloneTabs();
-    Object.assign(tabs[current], readEditorValues());
-
-    if (getTotalContentLength() > MAX_TOTAL_CONTENT_LENGTH) {
-      tabs = previousTabs;
-      renderEditor();
-      showSaveNotice(`全体で${MAX_TOTAL_CONTENT_LENGTH}文字までです。直前の入力を戻しました。`, 'error', 0);
+  function handleEditorInput(event) {
+    const input = event.currentTarget;
+    const previous = tabs[current][input.id];
+    const next = input.value;
+    if (previous === next) return;
+    if (next.length > MAX_TAB_CONTENT_LENGTH || getTotalContentLength() - previous.length + next.length > MAX_TOTAL_CONTENT_LENGTH) {
+      input.value = previous;
+      showSaveNotice('入力上限に達しました。直前の入力を戻しました。', 'error', 0);
       return;
     }
-
-    beginEditHistory(previousState);
+    beginEditHistory(input.id);
+    tabs[current][input.id] = next;
     scheduleAutosave();
-  }
-
-  function handleEditorInput() {
-    applyEditorInput();
-  }
-
-  function handleNoteInput() {
-    applyEditorInput();
   }
 
   function handleEditorKeyDown(event) {
@@ -714,7 +781,8 @@
     } else if (key === 's') {
       event.preventDefault();
       flushPendingEditHistory();
-      saveTabs({ notify: true });
+      if (workspaceMode === 'shared') acceptSharedWorkspace();
+      else saveTabs({ notify: true });
     } else if (key === 'z') {
       event.preventDefault();
       event.shiftKey ? redo() : undo();
@@ -731,12 +799,15 @@
   function injectIntoDocument(code, target, markup) {
     if (!markup) return code;
     const closingPattern = new RegExp(`</${target}\\s*>`, 'i');
-    if (closingPattern.test(code)) return code.replace(closingPattern, `${markup}</${target}>`);
-    const openingPattern = new RegExp(`<${target}[^>]*>`, 'i');
-    if (openingPattern.test(code)) return code.replace(openingPattern, (match) => `${match}${markup}`);
-    if (target === 'head') return code.replace(/<html[^>]*>/i, (match) => `${match}<head>${markup}</head>`);
-    const withBodyMarkup = code.replace(/<\/html\s*>/i, `${markup}</html>`);
-    return withBodyMarkup === code ? `${code}${markup}` : withBodyMarkup;
+    if (closingPattern.test(code)) return code.replace(closingPattern, match => markup + match);
+    if (target === 'head') {
+      if (/<head\b[^>]*>/i.test(code)) return code.replace(/<head\b[^>]*>/i, match => match + markup);
+      const head = `<head>${markup}</head>`;
+      if (/<html\b[^>]*>/i.test(code)) return code.replace(/<html\b[^>]*>/i, match => match + head);
+      return code.replace(/<!doctype\s+html[^>]*>/i, match => match + head);
+    }
+    if (/<\/html\s*>/i.test(code)) return code.replace(/<\/html\s*>/i, match => markup + match);
+    return code + markup;
   }
 
   function buildPreviewDocument(tab) {
@@ -756,7 +827,7 @@
       : '';
     const htmlInput = tab.html.trim();
 
-    if (/^\s*(?:<!doctype[^>]*>\s*)?<html(?:\s|>)/i.test(htmlInput)) {
+    if (/<!doctype\s+html\b|<html(?:\s|>)/i.test(htmlInput)) {
       let code = htmlInput;
       code = injectIntoDocument(code, 'head', styleBlock);
       code = injectIntoDocument(code, 'body', scriptBlock);
@@ -773,6 +844,7 @@
   function runCode({ recordExecution = true, persist = true } = {}) {
     if (!saveCurrentTabData() || !tabs[current]) return;
     returnToPreviewBtnEl.hidden = true;
+    resultIframeEl.setAttribute('sandbox', workspaceMode === 'local' ? LOCAL_PREVIEW_SANDBOX : 'allow-scripts');
     resultIframeEl.srcdoc = buildPreviewDocument(tabs[current]);
     previewMode = 'execution';
 
@@ -781,7 +853,10 @@
       tabs[current].execCount = Math.min(Number.MAX_SAFE_INTEGER, (tabs[current].execCount || 0) + 1);
     }
     showExecInfo();
-    if (persist && workspaceMode === 'local') persistCandidate(tabs);
+    if (persist && workspaceMode === 'local') {
+      pendingLocalEdits = true;
+      persistCandidate(tabs);
+    }
   }
 
   function showExecInfo() {
@@ -794,6 +869,7 @@
   }
 
   function resetPreview(message = 'コードは自動実行されません。内容を確認して「コードを実行」を押してください。') {
+    resultIframeEl.setAttribute('sandbox', 'allow-scripts');
     resultIframeEl.srcdoc = `<!doctype html><html lang="ja"><body style="margin:0;padding:2em;background:#f5f7fa;color:#4a5565;font-family:system-ui,sans-serif;text-align:center;"><p>${escapeHtml(message)}</p></body></html>`;
     previewMode = 'empty';
     returnToPreviewBtnEl.hidden = true;
@@ -851,13 +927,17 @@
         if (!confirm(`${importedTabs.length}件のタブをインポートし、現在の保存データと置き換えますか？ 元のデータはバックアップへ退避されます。`)) return;
         if (!persistCandidate(importedTabs, { destructive: true, reason: 'import-json' })) return;
 
-        flushPendingEditHistory();
-        pushUndo();
+        if (workspaceMode === 'local') {
+          flushPendingEditHistory();
+          pushUndo();
+        } else {
+          clearWorkspaceHistory();
+        }
         tabs = importedTabs;
         current = 0;
         workspaceMode = 'local';
         corruptSavedData = null;
-        localWorkspaceSnapshot = { tabs: cloneTabs(), current: 0, mode: 'local', corruptSavedData: null };
+        localWorkspaceSnapshot = null;
         renderTabs();
         resetPreview('インポートしました。コードはまだ実行されていません。');
         hideSystemNotice();
@@ -876,17 +956,17 @@
     reader.readAsText(file);
   }
 
-  function shareCurrentTab() {
-    if (!saveCurrentTabData() || !tabs[current]) return;
+  function shareTabs() {
+    if (!saveCurrentTabData()) return;
     try {
       const shareUrl = new URL(location.href);
       shareUrl.search = '';
-      shareUrl.hash = '';
-      shareUrl.searchParams.set('data', stringToBase64Url(JSON.stringify([tabs[current]])));
-      if (shareUrl.toString().length > MAX_SHARE_URL_LENGTH) {
-        throw new Error(`共有URLが${MAX_SHARE_URL_LENGTH}文字を超えます。JSON Exportを利用してください。`);
-      }
-      prompt(`現在の「${tabs[current].name}」だけを共有できます。受け取った側では自動実行・自動保存されません。`, shareUrl.toString());
+      const json = JSON.stringify(tabs);
+      const tooLong = `共有URLが${MAX_SHARE_URL_LENGTH}文字を超えます。JSON Exportを利用してください。`;
+      if (json.length > MAX_SHARE_URL_LENGTH) throw new Error(tooLong);
+      shareUrl.hash = 'data=' + stringToBase64Url(json);
+      if (shareUrl.href.length > MAX_SHARE_URL_LENGTH) throw new Error(tooLong);
+      prompt(`このURLには全${tabs.length}タブのコードとメモが含まれます。内容を確認してから共有してください。`, shareUrl.href);
     } catch (error) {
       console.error('Share URL generation error:', error);
       showSaveNotice(`共有URLを生成できません：${error.message}`, 'error', 0);
@@ -917,35 +997,38 @@
     }
 
     dividerEl.addEventListener('pointerdown', (event) => {
-      if (innerWidth < 900 || event.target.closest('.snap-btn')) return;
-      isDragging = true;
+      if (innerWidth <= 900 || activePointerId !== null || event.target.closest('.snap-btn')) return;
+      if (event.pointerType === 'mouse' && event.button !== 0) return;
+      activePointerId = event.pointerId;
       dragStartX = event.clientX;
       dragStartWidth = editorColEl.offsetWidth;
       dividerEl.classList.add('active');
+      if (event.pointerType !== 'mouse') event.preventDefault();
       dividerEl.setPointerCapture?.(event.pointerId);
       document.body.style.userSelect = 'none';
       document.body.style.cursor = 'ew-resize';
     });
 
-    dividerEl.addEventListener('pointermove', (event) => {
-      if (!isDragging) return;
+    document.addEventListener('pointermove', (event) => {
+      if (event.pointerId !== activePointerId) return;
       setEditorWidth(dragStartWidth + event.clientX - dragStartX);
     });
 
-    const finishDrag = () => {
-      if (!isDragging) return;
-      isDragging = false;
+    const finishDrag = (event) => {
+      if (event.pointerId !== activePointerId) return;
+      activePointerId = null;
       dividerEl.classList.remove('active');
       document.body.style.userSelect = '';
       document.body.style.cursor = '';
       saveEditorWidth(editorColEl.offsetWidth);
     };
-    dividerEl.addEventListener('pointerup', finishDrag);
-    dividerEl.addEventListener('pointercancel', finishDrag);
+    document.addEventListener('pointerup', finishDrag);
+    document.addEventListener('pointercancel', finishDrag);
+    dividerEl.addEventListener('lostpointercapture', finishDrag);
 
-    dividerEl.addEventListener('dblclick', () => {
-      if (innerWidth < 900) return;
-      saveEditorWidth(setEditorWidth(dividerEl.parentElement.offsetWidth / 2));
+    dividerEl.addEventListener('dblclick', (event) => {
+      if (innerWidth <= 900 || event.target.closest('.snap-btn')) return;
+      saveEditorWidth(setEditorWidth(event.clientX - dividerEl.parentElement.getBoundingClientRect().left));
     });
 
     dividerEl.addEventListener('keydown', (event) => {
@@ -1056,13 +1139,19 @@
     runBtnEl.addEventListener('click', () => runCode());
     stopPreviewBtnEl.addEventListener('click', stopPreview);
     returnToPreviewBtnEl.addEventListener('click', () => runCode({ recordExecution: false }));
-    noteTextareaEl.addEventListener('input', handleNoteInput);
+    noteTextareaEl.addEventListener('input', handleEditorInput);
     noteTextareaEl.addEventListener('keydown', handleEditorKeyDown);
 
     document.getElementById('exportBtn').addEventListener('click', exportTabs);
     document.getElementById('importBtn').addEventListener('click', () => document.getElementById('importFile').click());
     document.getElementById('importFile').addEventListener('change', importTabs);
-    document.getElementById('shareBtn').addEventListener('click', shareCurrentTab);
+    document.getElementById('shareBtn').addEventListener('click', shareTabs);
+    document.getElementById('sharedDataOpenBtn').addEventListener('click', openSharedPreview);
+    document.getElementById('sharedDataCancelBtn').addEventListener('click', cancelSharedPreview);
+    sharedDataModalEl.addEventListener('cancel', event => {
+      event.preventDefault();
+      cancelSharedPreview();
+    });
     document.getElementById('undoBtn').addEventListener('click', undo);
     document.getElementById('redoBtn').addEventListener('click', redo);
     document.getElementById('cheatBtn').addEventListener('click', showCheatModal);
@@ -1092,18 +1181,15 @@
     showWorkspaceNotice();
     sidebarEl.classList.toggle('closed', !sidebarOpen);
     sidebarToggleBtnEl.setAttribute('aria-expanded', String(sidebarOpen));
+    window.addEventListener('hashchange', receiveSharedLink);
+    receiveSharedLink();
   }
 
+  window.miniCodeApp = { switchTab, addTab, removeTab, editTabName, viewCodeInPreview };
   window.addEventListener('DOMContentLoaded', init);
   window.addEventListener('beforeunload', () => {
     flushPendingEditHistory();
     clearTimeout(autosaveTimer);
-    if (workspaceMode === 'local' && saveCurrentTabData()) {
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(validateTabsData(tabs)));
-      } catch (error) {
-        console.error('Failed to save before unload:', error);
-      }
-    }
+    if (workspaceMode === 'local' && pendingLocalEdits) saveTabs();
   });
 })();

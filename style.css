@@ -385,6 +385,7 @@ input:focus-visible,
 .editor-col,
 .preview-col {
   display: flex;
+  flex: 1 1 0;
   flex-direction: column;
   min-width: 220px;
   min-height: 0;
@@ -398,8 +399,11 @@ input:focus-visible,
   background: var(--editor);
 }
 
+.editor-col[style*="width"] {
+  flex: 0 0 auto;
+}
+
 .preview-col {
-  flex: 1 1 auto;
   padding: 16px;
   background: var(--preview);
   border-left: 1px solid var(--line);
@@ -535,6 +539,7 @@ textarea:focus {
   margin: 0 -1px;
   background: #303744;
   cursor: ew-resize;
+  touch-action: none;
 }
 
 .divider:hover,
@@ -692,6 +697,25 @@ iframe {
   font-size: 1.2rem;
 }
 
+.share-dialog {
+  width: min(32rem, calc(100% - 2rem));
+  max-height: calc(100% - 2rem);
+  padding: 1.5rem;
+  border: 1px solid var(--info-line);
+  border-radius: 12px;
+  background: var(--info-bg);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.share-dialog::backdrop {
+  background: rgba(15, 18, 30, 0.86);
+}
+
+.share-dialog h2 {
+  margin-top: 0;
+}
+
 .cheat-modal {
   position: fixed;
   inset: 0;
@@ -820,6 +844,7 @@ iframe {
 
   .editor-col,
   .preview-col {
+    flex: 0 0 auto;
     width: 100% !important;
     min-width: 0;
     max-width: none;

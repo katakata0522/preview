@@ -76,6 +76,16 @@
     </main>
   </div>
 
+  <dialog id="sharedDataModal" class="share-dialog" aria-labelledby="sharedDataTitle" aria-describedby="sharedDataSummary">
+    <h2 id="sharedDataTitle">共有データを受け取りました</h2>
+    <p id="sharedDataSummary"></p>
+    <p>内容を確認してから、保存するか選べます。</p>
+    <div class="system-notice-actions">
+      <button type="button" id="sharedDataOpenBtn" class="notice-primary">内容を確認する</button>
+      <button type="button" id="sharedDataCancelBtn" class="notice-secondary">今のデータを使う</button>
+    </div>
+  </dialog>
+
   <div id="cheatModal" class="cheat-modal" role="dialog" aria-modal="true" aria-labelledby="cheatModalTitle" hidden>
     <div class="cheat-modal-content">
       <button type="button" class="cheat-modal-close" id="cheatModalCloseBtn" aria-label="ショートカット一覧を閉じる">×</button>
@@ -90,7 +100,7 @@
         <li><b>25% / 50% / 75%</b>：エディタ幅を切り替え</li>
         <li><b>Clear</b>：現在のタブのコードとメモを消去</li>
         <li><b>Export / Import</b>：タブ構成・内容をJSON保存／復元</li>
-        <li><b>Share</b>：現在のタブだけを共有URLにする</li>
+        <li><b>Share</b>：全タブのコードとメモを1つのURLで共有</li>
         <li><b>Esc</b>：この画面または全画面プレビューを閉じる</li>
       </ul>
     </div>

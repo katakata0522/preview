@@ -41,6 +41,9 @@ async function createApp({
     virtualConsole
   });
   const { window } = dom;
+  // jsdom does not implement the native dialog methods.
+  window.HTMLDialogElement.prototype.showModal ??= function () { this.open = true; };
+  window.HTMLDialogElement.prototype.close ??= function () { this.open = false; };
   window.alert = () => {};
   window.promptCalls = [];
   window.prompt = (message, value) => {
@@ -100,12 +103,19 @@ test('共有URLは一時表示に留め、既存保存データを上書き・�
   });
   const { window } = dom;
 
+  assert.equal(window.document.querySelector('#sharedDataModal').open, true);
+  assert.equal(window.document.querySelector('.tab-name').textContent, 'ORIGINAL');
+  assert.deepEqual(JSON.parse(window.localStorage.getItem(STORAGE_KEY)), original);
+  window.document.querySelector('#sharedDataOpenBtn').click();
   assert.equal(window.document.querySelector('.tab-name').textContent, 'SHARED');
   assert.match(window.document.querySelector('#result').srcdoc, /自動実行されません/);
   assert.deepEqual(JSON.parse(window.localStorage.getItem(STORAGE_KEY)), original);
   assert.equal(window.location.search, '');
   assert.equal(window.document.querySelector('#systemNotice').hidden, false);
 
+  window.document.querySelector('#runBtn').click();
+  assert.equal(window.document.querySelector('#result').getAttribute('sandbox'), 'allow-scripts');
+  assert.deepEqual(JSON.parse(window.localStorage.getItem(STORAGE_KEY)), original);
   window.document.querySelector('#systemNoticePrimary').click();
   assert.equal(JSON.parse(window.localStorage.getItem(STORAGE_KEY))[0].name, 'SHARED');
   const backup = JSON.parse(window.localStorage.getItem(BACKUP_KEY));
@@ -216,19 +226,114 @@ test('1枚HTMLモードでも別欄のCSSとJavaScriptを反映する', async ()
   dom.window.close();
 });
 
-test('Shareは現在のタブだけを含める', async () => {
-  const dom = await createApp();
+test('Shareは選択中のタブにかかわらず全タブのコードとメモを順番どおり含める', async () => {
+  const original = [
+    tab({ name: '最初🌱', css: '\np { color: red }', note: 'A'.repeat(6500) }),
+    tab({ name: '中央', js: '\r\n2 + 3\r\n', note: 'メモ' }),
+    tab({ name: '最後', html: '<p>最後</p>', execCount: 3 })
+  ];
+  const dom = await createApp({
+    beforeInit(window) { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(original)); }
+  });
   const { window } = dom;
-  for (let index = 0; index < 3; index += 1) {
-    window.document.querySelector('#addTabBtn').click();
-  }
-  setEditor(window, { html: '<p>CURRENT_FOURTH</p>' });
+  window.document.querySelector('#tab-1').click();
+  setEditor(window, { html: '<p>現在の編集</p>' });
   window.document.querySelector('#shareBtn').click();
 
   const shareUrl = new URL(window.promptCalls.at(-1).value);
-  const shared = JSON.parse(Buffer.from(shareUrl.searchParams.get('data'), 'base64url').toString());
-  assert.equal(shared.length, 1);
-  assert.match(shared[0].html, /CURRENT_FOURTH/);
+  assert.equal(shareUrl.search, '');
+  const data = new URLSearchParams(shareUrl.hash.slice(1)).get('data');
+  const shared = JSON.parse(Buffer.from(data, 'base64url').toString());
+  assert.ok(shareUrl.href.length > 8000 && shareUrl.href.length <= 12000);
+  assert.deepEqual(shared, [original[0], { ...original[1], html: '<p>現在の編集</p>' }, original[2]]);
+  assert.match(window.promptCalls.at(-1).message, /全3タブ/);
+
+  window.document.querySelector('#tab-0').click();
+  setEditor(window, { note: 'A'.repeat(9300) });
+  window.document.querySelector('#tab-1').click();
+  window.document.querySelector('#shareBtn').click();
+  assert.equal(window.promptCalls.length, 1);
+  assert.match(window.document.querySelector('#saveNotice').textContent, /JSON Export/);
+  dom.window.close();
+});
+
+test('共有プレビューを閉じた後は未確定のUndoや再読込で下書きを上書きしない', async () => {
+  const mine = [tab({ name: '保存済み', html: '<p>下書き</p>' })];
+  const shared = [tab({ name: '共有A' }), tab({ name: '共有B' })];
+  const dom = await createApp({
+    url: `https://katakata0522.github.io/preview/?data=${encodeShare(shared)}`,
+    beforeInit(window) { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(mine)); }
+  });
+  const { window } = dom;
+  const doc = window.document;
+  doc.querySelector('#sharedDataOpenBtn').click();
+  doc.querySelector('#tab-1').click();
+  setEditor(window, { note: '一時的な編集' });
+  doc.querySelector('#undoBtn').click();
+  doc.querySelector('#redoBtn').click();
+  assert.deepEqual(JSON.parse(window.localStorage.getItem(STORAGE_KEY)), mine);
+  setEditor(window, { note: '未確定の入力' });
+  doc.querySelector('#systemNoticeSecondary').click();
+  doc.querySelector('#undoBtn').click();
+  assert.equal(doc.querySelector('#html').value, mine[0].html);
+  window.dispatchEvent(new window.Event('beforeunload'));
+  assert.deepEqual(JSON.parse(window.localStorage.getItem(STORAGE_KEY)), mine);
+  dom.window.close();
+});
+
+test('保存済みの長い共有リンクを開け、上限超過時は元のタブを維持する', async () => {
+  const shared = [tab({ name: '日本語', note: 'a'.repeat(6700) }), tab({ name: '二つ目' })];
+  const url = `https://katakata0522.github.io/preview/?view=editor#data=${encodeShare(shared)}`;
+  const dom = await createApp({ url });
+  assert.equal(dom.window.document.querySelector('#sharedDataModal').open, true);
+  assert.equal(dom.window.location.hash, '');
+  assert.equal(dom.window.location.search, '?view=editor');
+  dom.window.document.querySelector('#sharedDataOpenBtn').click();
+  assert.equal(dom.window.document.querySelector('#note').value, shared[0].note);
+  dom.window.close();
+  const tooLong = await createApp({url: `https://katakata0522.github.io/preview/?data=${'A'.repeat(12001)}`});
+  assert.equal(tooLong.window.document.querySelector('#sharedDataModal').open, false);
+  assert.match(tooLong.window.document.querySelector('#systemNoticeText').textContent, /大きすぎ/);
+  tooLong.window.close();
+});
+
+test('開いたまま共有リンクに移動しても、元のタブ選択と直前の編集に戻れる', async () => {
+  const dom = await createApp();
+  const { window } = dom;
+  const doc = window.document;
+  doc.querySelector('#addTabBtn').click();
+  setEditor(window, { html: '<p>入力直後</p>' });
+  const shared = [tab({ name: '確認用' })];
+  window.history.replaceState(null, '', '#data=' + encodeShare(shared));
+  window.dispatchEvent(new window.HashChangeEvent('hashchange'));
+  assert.equal(doc.querySelector('#sharedDataModal').open, true);
+  doc.querySelector('#sharedDataOpenBtn').click();
+  assert.equal(doc.querySelector('.tab-name').textContent, '確認用');
+  doc.querySelector('#systemNoticeSecondary').click();
+  assert.equal(doc.querySelector('[aria-selected="true"]').id, 'tab-1');
+  assert.equal(doc.querySelector('#html').value, '<p>入力直後</p>');
+  assert.equal(JSON.parse(window.localStorage.getItem(STORAGE_KEY))[1].html, '<p>入力直後</p>');
+  dom.window.close();
+});
+
+test('1枚HTMLに追加するCSSとJSの置換文字をそのまま実行する', async () => {
+  const dom = await createApp();
+  const { window } = dom;
+  for (const html of [
+    '<html><head></head><body><p id="value"></p></body></html>',
+    '<html><p id="value"></p></html>',
+    '<!doctype html><p id="value"></p>'
+  ]) {
+    const css = '#value::before{content:"[$&]"}';
+    const js = 'document.querySelector("#value").textContent = "red".replace(/red/, "[$&]")';
+    setEditor(window, { html, css, js });
+    window.document.querySelector('#runBtn').click();
+    const generated = window.document.querySelector('#result').srcdoc;
+    const rendered = new JSDOM(generated, { runScripts: 'dangerously' });
+    assert.equal(rendered.window.document.querySelector('style').textContent, css);
+    assert.equal(rendered.window.document.querySelector('#value').textContent, '[red]');
+    rendered.window.close();
+  }
   dom.window.close();
 });
 

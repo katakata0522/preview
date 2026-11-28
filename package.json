@@ -4,6 +4,8 @@
   "private": true,
   "description": "旧Webミニ実行機の回帰テストと静的検証",
   "scripts": {
+    "dev": "node scripts/ai-studio-preview.mjs",
+    "start": "node scripts/ai-studio-preview.mjs",
     "test": "node --test tests/*.test.cjs",
     "check:js": "node --check script.js",
     "check:html": "html-validate index.html",
@@ -12,7 +14,7 @@
   },
   "devDependencies": {
     "css-tree": "^3.1.0",
-    "html-validate": "^10.1.2",
+    "html-validate": "^11.23.0",
     "jsdom": "^26.1.0"
   }
 }
